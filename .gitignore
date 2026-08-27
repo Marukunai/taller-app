@@ -1,0 +1,21 @@
+# Instalaciones accidentales/fallidas en la raíz del repo (el proyecto Vite
+# real vive en taller-app/, que tiene su propio .gitignore).
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Documentos de especificación originales (no forman parte de la app).
+Anexo_Blindaje_Seguridad_Ajustes_Taller.pdf
+Documento_Funcional_Stack_PlanAccion_Taller.pdf
+Kit_Inicio_Desarrollo_Taller.pdf
+gemini-code-*.md
+
+# Restos de instalaciones fallidas ya movidos aquí para borrar a mano.
+_to_delete/
+
+# Editor/OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea

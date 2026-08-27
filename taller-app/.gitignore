@@ -24,3 +24,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Estado local de la Supabase CLI (project ref, versión de la CLI...).
+supabase/.temp/

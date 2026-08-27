@@ -6,7 +6,11 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // supabase/functions/** son Edge Functions que corren en el runtime Deno
+  // de Supabase, no en este proyecto Vite/Node — usan globals (`Deno`) e
+  // imports remotos que ni este ESLint ni el tsc del proyecto entienden a
+  // propósito (ver el comentario `@ts-nocheck` en esos archivos).
+  globalIgnores(['dist', 'supabase/functions/**']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

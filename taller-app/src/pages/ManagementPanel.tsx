@@ -1,0 +1,484 @@
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ArrowRight,
+  Car,
+  ClipboardList,
+  ImageOff,
+  Loader2,
+  Phone,
+  RefreshCw,
+  Wrench,
+  XCircle,
+} from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import PiezasUsadasModal from '../components/PiezasUsadasModal';
+import CitaRecogidaModal from '../components/CitaRecogidaModal';
+import CancelarOrdenModal from '../components/CancelarOrdenModal';
+import SolicitudesPanel from '../components/SolicitudesPanel';
+import type { EstadoOrden, TipoServicio } from '../lib/types';
+
+const ESTADOS: { value: EstadoOrden; label: string; barra: string; fondo: string }[] = [
+  { value: 'solicitado', label: 'Solicitado', barra: 'bg-slate-400', fondo: 'bg-slate-50' },
+  { value: 'recepcionado', label: 'Recepcionado', barra: 'bg-sky-400', fondo: 'bg-sky-50' },
+  { value: 'en_proceso', label: 'En proceso', barra: 'bg-amber-400', fondo: 'bg-amber-50' },
+  { value: 'listo', label: 'Listo', barra: 'bg-emerald-400', fondo: 'bg-emerald-50' },
+  { value: 'entregado', label: 'Entregado', barra: 'bg-gray-400', fondo: 'bg-gray-50' },
+  { value: 'cancelado', label: 'Cancelado', barra: 'bg-red-400', fondo: 'bg-red-50' },
+];
+
+const SIGUIENTE_ESTADO: Partial<Record<EstadoOrden, EstadoOrden>> = {
+  solicitado: 'recepcionado',
+  recepcionado: 'en_proceso',
+  en_proceso: 'listo',
+};
+
+/** Estados desde los que todavía tiene sentido cancelar la orden (una vez
+ *  entregada o ya cancelada, no aplica). */
+const CANCELABLE: EstadoOrden[] = ['solicitado', 'recepcionado', 'en_proceso', 'listo'];
+
+const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
+  mantenimiento: 'Mantenimiento',
+  neumaticos: 'Neumáticos',
+  averia: 'Avería',
+};
+
+interface OrdenPanel {
+  id: string;
+  estado: EstadoOrden;
+  tipo_servicio: TipoServicio;
+  descripcion_averia: string | null;
+  fecha_entrada: string | null;
+  cita_recogida: string | null;
+  motivo_cancelacion: string | null;
+  vehiculos: {
+    matricula: string;
+    marca: string | null;
+    modelo: string | null;
+    color: string | null;
+    clientes: { nombre: string; telefono: string; email: string | null } | null;
+  } | null;
+  inspecciones_entrada: { fotos_urls: string[] | null }[] | null;
+  piezas_usadas: { id: string }[] | null;
+}
+
+interface ManagementPanelProps {
+  /** Si se pasa, las órdenes en estado "listo" muestran un botón para pasar
+   *  a la pantalla de entrega (checkout con segunda firma) en vez de un
+   *  simple botón de avanzar estado. */
+  onEntregar?: (ordenId: string) => void;
+}
+
+/** Primera foto subida en la inspección de entrada de una orden, si hay
+ *  alguna — se usa como miniatura para reconocer el vehículo de un vistazo
+ *  y no confundirlo con otro al entregarlo. */
+function primeraFoto(orden: OrdenPanel): string | null {
+  const fotos = orden.inspecciones_entrada?.[0]?.fotos_urls;
+  return fotos && fotos.length > 0 ? fotos[0] : null;
+}
+
+const SELECT_ORDENES =
+  'id, estado, tipo_servicio, descripcion_averia, fecha_entrada, cita_recogida, motivo_cancelacion, ' +
+  'vehiculos(matricula, marca, modelo, color, clientes(nombre, telefono, email)), ' +
+  'inspecciones_entrada(fotos_urls), piezas_usadas(id)';
+
+/**
+ * Tablero de órdenes de trabajo agrupadas por estado, con un botón por
+ * tarjeta para avanzar al siguiente estado del flujo del taller. Incluye
+ * también, en una pestaña aparte, las solicitudes que los clientes crean
+ * ellos mismos desde el Portal de cliente.
+ */
+export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
+  const [pestana, setPestana] = useState<'ordenes' | 'solicitudes'>('ordenes');
+  const [ordenes, setOrdenes] = useState<OrdenPanel[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actualizandoId, setActualizandoId] = useState<string | null>(null);
+  const [piezasModal, setPiezasModal] = useState<{ ordenId: string; matricula: string } | null>(null);
+  const [citaModal, setCitaModal] = useState<OrdenPanel | null>(null);
+  const [cancelarModal, setCancelarModal] = useState<OrdenPanel | null>(null);
+
+  const cargarOrdenes = useCallback(async () => {
+    setCargando(true);
+    setError(null);
+    const { data, error: fetchError } = await supabase
+      .from('ordenes_trabajo')
+      .select(SELECT_ORDENES)
+      .order('fecha_entrada', { ascending: false });
+
+    if (fetchError) {
+      setError(fetchError.message);
+    } else {
+      setOrdenes((data ?? []) as unknown as OrdenPanel[]);
+    }
+    setCargando(false);
+  }, []);
+
+  useEffect(() => {
+    // Carga inicial al montar: sincroniza el estado con Supabase (fuente de
+    // datos externa), patrón estándar de "fetch on mount".
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarOrdenes();
+  }, [cargarOrdenes]);
+
+  const avanzarEstado = async (orden: OrdenPanel) => {
+    const siguiente = SIGUIENTE_ESTADO[orden.estado];
+    if (!siguiente) return;
+
+    // Pasar a "Listo" concierta antes una cita de recogida con el cliente
+    // (día/hora) y ofrece avisarle — se gestiona en su propio modal, que ya
+    // hace el update en base de datos.
+    if (siguiente === 'listo') {
+      setCitaModal(orden);
+      return;
+    }
+
+    setActualizandoId(orden.id);
+    setError(null);
+    const { error: updateError } = await supabase
+      .from('ordenes_trabajo')
+      .update({ estado: siguiente })
+      .eq('id', orden.id);
+    setActualizandoId(null);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setOrdenes((prev) => prev.map((o) => (o.id === orden.id ? { ...o, estado: siguiente } : o)));
+  };
+
+  const contadorPendientes = useSolicitudesPendientes();
+
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-8">
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Panel de gestión</h1>
+          <p className="text-sm text-gray-500">Órdenes de trabajo agrupadas por estado.</p>
+        </div>
+        {pestana === 'ordenes' && (
+          <button
+            type="button"
+            onClick={cargarOrdenes}
+            disabled={cargando}
+            className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${cargando ? 'animate-spin' : ''}`} /> Actualizar
+          </button>
+        )}
+      </header>
+
+      <div className="mb-6 flex gap-2 border-b border-gray-200">
+        <button
+          type="button"
+          onClick={() => setPestana('ordenes')}
+          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition ${
+            pestana === 'ordenes'
+              ? 'border-indigo-600 text-indigo-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Wrench className="h-4 w-4" /> Órdenes
+        </button>
+        <button
+          type="button"
+          onClick={() => setPestana('solicitudes')}
+          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition ${
+            pestana === 'solicitudes'
+              ? 'border-indigo-600 text-indigo-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <ClipboardList className="h-4 w-4" /> Solicitudes de clientes
+          {contadorPendientes > 0 && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+              {contadorPendientes}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {pestana === 'solicitudes' ? (
+        <SolicitudesPanel />
+      ) : (
+        <>
+          {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
+
+          {cargando && ordenes.length === 0 ? (
+            <p className="flex items-center gap-2 text-sm text-gray-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Cargando órdenes...
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+              {ESTADOS.map((columna) => {
+                const ordenesColumna = ordenes.filter((o) => o.estado === columna.value);
+                return (
+                  <div key={columna.value} className={`rounded-2xl ${columna.fondo} p-3`}>
+                    <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                      <span className={`h-2.5 w-2.5 rounded-full ${columna.barra}`} />
+                      {columna.label}
+                      <span className="ml-auto rounded-full bg-white px-2 py-0.5 text-xs text-gray-600 shadow-sm">
+                        {ordenesColumna.length}
+                      </span>
+                    </h2>
+                    <div className="space-y-3">
+                      {ordenesColumna.length === 0 && <p className="text-xs text-gray-400">Sin órdenes.</p>}
+                      {ordenesColumna.map((orden) => {
+                        const foto = primeraFoto(orden);
+                        return (
+                          <div
+                            key={orden.id}
+                            className="space-y-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-gray-100"
+                          >
+                            <div className="flex items-start gap-2.5">
+                              {foto ? (
+                                <img
+                                  src={foto}
+                                  alt=""
+                                  className="h-12 w-12 shrink-0 rounded-lg border border-gray-100 object-cover"
+                                />
+                              ) : (
+                                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-300">
+                                  <ImageOff className="h-5 w-5" />
+                                </span>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-900">
+                                  <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                  <span className="truncate">{orden.vehiculos?.matricula ?? '—'}</span>
+                                </div>
+                                <p className="truncate text-xs text-gray-500">
+                                  {[orden.vehiculos?.marca, orden.vehiculos?.modelo].filter(Boolean).join(' ') ||
+                                    'Sin marca/modelo'}
+                                </p>
+                                {orden.vehiculos?.color && (
+                                  <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-gray-500">
+                                    <span
+                                      className="h-2.5 w-2.5 rounded-full border border-gray-300"
+                                      style={{ backgroundColor: colorCss(orden.vehiculos.color) }}
+                                    />
+                                    {orden.vehiculos.color}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <p className="truncate text-xs text-gray-600">
+                              {orden.vehiculos?.clientes?.nombre ?? 'Cliente desconocido'}
+                            </p>
+                            {orden.vehiculos?.clientes?.telefono && (
+                              <p className="flex items-center gap-1 text-xs text-gray-400">
+                                <Phone className="h-3 w-3" /> {orden.vehiculos.clientes.telefono}
+                              </p>
+                            )}
+                            <p className="text-xs font-medium text-blue-600">
+                              {ETIQUETAS_SERVICIO[orden.tipo_servicio]}
+                            </p>
+                            {orden.descripcion_averia && (
+                              <p className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                                {orden.descripcion_averia}
+                              </p>
+                            )}
+                            {orden.estado === 'listo' && orden.cita_recogida && (
+                              <p className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                                Recogida: {new Date(orden.cita_recogida).toLocaleDateString('es-ES')}{' '}
+                                {new Date(orden.cita_recogida).toLocaleTimeString('es-ES', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </p>
+                            )}
+                            {orden.estado === 'cancelado' && orden.motivo_cancelacion && (
+                              <p className="rounded bg-red-50 px-2 py-1 text-xs text-red-700">
+                                {orden.motivo_cancelacion}
+                              </p>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPiezasModal({
+                                  ordenId: orden.id,
+                                  matricula: orden.vehiculos?.matricula ?? '—',
+                                })
+                              }
+                              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100"
+                            >
+                              <Wrench className="h-3.5 w-3.5" />
+                              Piezas usadas
+                              {orden.piezas_usadas && orden.piezas_usadas.length > 0
+                                ? ` (${orden.piezas_usadas.length})`
+                                : ''}
+                            </button>
+
+                            {orden.estado === 'listo' && onEntregar ? (
+                              <button
+                                type="button"
+                                onClick={() => onEntregar(orden.id)}
+                                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                              >
+                                Entregar vehículo <ArrowRight className="h-3.5 w-3.5" />
+                              </button>
+                            ) : (
+                              SIGUIENTE_ESTADO[orden.estado] && (
+                                <button
+                                  type="button"
+                                  onClick={() => avanzarEstado(orden)}
+                                  disabled={actualizandoId === orden.id}
+                                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                                >
+                                  {actualizandoId === orden.id ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <>
+                                      Avanzar a{' '}
+                                      {ESTADOS.find((e) => e.value === SIGUIENTE_ESTADO[orden.estado])?.label}{' '}
+                                      <ArrowRight className="h-3.5 w-3.5" />
+                                    </>
+                                  )}
+                                </button>
+                              )
+                            )}
+
+                            {CANCELABLE.includes(orden.estado) && (
+                              <button
+                                type="button"
+                                onClick={() => setCancelarModal(orden)}
+                                className="flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-gray-400 hover:bg-red-50 hover:text-red-600"
+                              >
+                                <XCircle className="h-3.5 w-3.5" /> Cancelar orden
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {piezasModal && (
+        <PiezasUsadasModal
+          open
+          ordenId={piezasModal.ordenId}
+          matricula={piezasModal.matricula}
+          onClose={() => {
+            setPiezasModal(null);
+            cargarOrdenes();
+          }}
+        />
+      )}
+
+      <CitaRecogidaModal
+        open={citaModal !== null}
+        orden={
+          citaModal
+            ? {
+                id: citaModal.id,
+                matricula: citaModal.vehiculos?.matricula ?? '—',
+                clienteNombre: citaModal.vehiculos?.clientes?.nombre ?? 'Cliente',
+                clienteTelefono: citaModal.vehiculos?.clientes?.telefono ?? null,
+                clienteEmail: citaModal.vehiculos?.clientes?.email ?? null,
+              }
+            : null
+        }
+        onClose={() => setCitaModal(null)}
+        onListo={(citaIso) => {
+          if (!citaModal) return;
+          setOrdenes((prev) =>
+            prev.map((o) => (o.id === citaModal.id ? { ...o, estado: 'listo', cita_recogida: citaIso } : o)),
+          );
+        }}
+      />
+
+      <CancelarOrdenModal
+        open={cancelarModal !== null}
+        ordenId={cancelarModal?.id ?? null}
+        matricula={cancelarModal?.vehiculos?.matricula ?? '—'}
+        onClose={() => setCancelarModal(null)}
+        onCancelada={(motivo) => {
+          if (!cancelarModal) return;
+          setOrdenes((prev) =>
+            prev.map((o) =>
+              o.id === cancelarModal.id ? { ...o, estado: 'cancelado', motivo_cancelacion: motivo } : o,
+            ),
+          );
+          setCancelarModal(null);
+        }}
+      />
+    </div>
+  );
+}
+
+/** Cuenta las solicitudes pendientes para el badge de la pestaña, sin
+ *  duplicar toda la carga de datos de SolicitudesPanel (consulta ligera,
+ *  solo trae el id). Se refresca al montar ManagementPanel Y en tiempo
+ *  real (Supabase Realtime) cada vez que cambia algo en `solicitudes` —
+ *  así el badge aparece/desaparece solo, sin tener que cambiar de pestaña
+ *  ni recargar la página, en cuanto un cliente crea, cancela o el propio
+ *  personal acepta/rechaza una solicitud. Requiere que `solicitudes` esté
+ *  añadida a la publicación `supabase_realtime` (ver schema.sql /
+ *  roles_finos_migration.sql) — si no lo está, este hook simplemente se
+ *  queda con el recuento inicial hasta el próximo montaje. */
+function useSolicitudesPendientes(): number {
+  const [contador, setContador] = useState(0);
+
+  const cargarContador = useCallback(async () => {
+    const { count } = await supabase
+      .from('solicitudes')
+      .select('id', { count: 'exact', head: true })
+      .eq('estado', 'pendiente');
+    setContador(count ?? 0);
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarContador();
+
+    const canal = supabase
+      .channel('solicitudes-contador')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes' }, () => {
+        cargarContador();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(canal);
+    };
+  }, [cargarContador]);
+
+  return contador;
+}
+
+/** Traduce un color escrito en texto libre (español, lo más habitual en un
+ *  taller) a un valor CSS aproximado para pintar la pastilla de color. Si no
+ *  reconoce la palabra, usa el propio texto tal cual (por si ya es un valor
+ *  CSS válido) y como último recurso un gris neutro. */
+function colorCss(color: string): string {
+  const normalizado = color.trim().toLowerCase();
+  const MAPA: Record<string, string> = {
+    blanco: '#f8fafc',
+    negro: '#1f2937',
+    gris: '#9ca3af',
+    'gris plata': '#cbd5e1',
+    plata: '#cbd5e1',
+    plateado: '#cbd5e1',
+    rojo: '#ef4444',
+    azul: '#3b82f6',
+    verde: '#22c55e',
+    amarillo: '#eab308',
+    naranja: '#f97316',
+    marron: '#78350f',
+    marrón: '#78350f',
+    beige: '#e7dfc6',
+    dorado: '#ca8a04',
+    morado: '#8b5cf6',
+    violeta: '#8b5cf6',
+    rosa: '#f472b6',
+    granate: '#7f1d1d',
+    turquesa: '#14b8a6',
+  };
+  return MAPA[normalizado] ?? color ?? '#9ca3af';
+}
