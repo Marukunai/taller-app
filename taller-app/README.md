@@ -525,10 +525,14 @@ despliegue automático cada vez que se hace push a `main`:
      Supabase (sección 2, paso 5 de este README), sin quitar
      `http://localhost:5173` — si no, la recuperación de contraseña
      (sección 20) no funcionará en producción.
-   - Actualiza el dominio placeholder (`tallergo.vercel.app`) por el
-     dominio real en las etiquetas `og:image`, `og:url`, `twitter:image`
-     de `index.html` (ver sección 22 más abajo) — si no, la vista previa
-     al compartir el enlace por WhatsApp no encontrará la imagen.
+   - Actualiza el dominio en las etiquetas `og:image`, `og:url`,
+     `twitter:image` de `index.html` (ver sección 22 más abajo) — si no, la
+     vista previa al compartir el enlace por WhatsApp no encontrará la
+     imagen.
+
+**Estado actual del despliegue**: la app ya está en producción en
+`https://taller-app-bay-tau.vercel.app`, con las etiquetas Open Graph de
+`index.html` apuntando a ese dominio.
 
 ## 22. Vista previa al compartir por WhatsApp/redes sociales
 
@@ -537,12 +541,13 @@ despliegue automático cada vez que se hace push a `main`:
 (`public/og-image.png`, 1200×630, generada a partir de
 `public/og-image-source.svg`) para que al compartir el enlace de la app
 por WhatsApp, Telegram o redes sociales aparezca una tarjeta con el
-logo/nombre de TallerGo en vez de un enlace pelado. **La URL de
-`og:image`/`og:url` en `index.html` es un placeholder
-(`https://tallergo.vercel.app`)** — hay que sustituirla por el dominio
-real una vez desplegado en Vercel (paso 5 de la sección 21), porque estas
-etiquetas necesitan una URL absoluta para que WhatsApp pueda descargar la
-imagen. Tras cambiar el dominio y desplegar, conviene comprobar la vista
+logo/nombre de TallerGo en vez de un enlace pelado. Estas etiquetas
+necesitan una URL absoluta para que WhatsApp pueda descargar la imagen —
+actualmente apuntan a `https://taller-app-bay-tau.vercel.app`, el dominio
+real ya desplegado. Si en el futuro cambias de dominio (por ejemplo, al
+añadir uno propio en **Settings → Domains** de Vercel), recuerda actualizar
+las URLs de `og:image`/`og:url`/`twitter:image` en `index.html` y volver a
+desplegar. Tras cualquier cambio de dominio, conviene comprobar la vista
 previa con una herramienta como el
 [Sharing Debugger de Facebook](https://developers.facebook.com/tools/debug/)
 (WhatsApp reutiliza el mismo sistema de rastreo de Open Graph), ya que
