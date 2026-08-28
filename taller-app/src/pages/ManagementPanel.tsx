@@ -7,6 +7,8 @@ import {
   Loader2,
   Phone,
   RefreshCw,
+  Truck,
+  Undo2,
   Wrench,
   XCircle,
 } from 'lucide-react';
@@ -15,7 +17,12 @@ import PiezasUsadasModal from '../components/PiezasUsadasModal';
 import CitaRecogidaModal from '../components/CitaRecogidaModal';
 import CancelarOrdenModal from '../components/CancelarOrdenModal';
 import SolicitudesPanel from '../components/SolicitudesPanel';
-import type { EstadoOrden, TipoServicio } from '../lib/types';
+import AsignarRepuestoModal from '../components/AsignarRepuestoModal';
+import type { EstadoOrden, OrdenPendienteRecepcion, TipoServicio } from '../lib/types';
+
+/** Estados en los que el vehículo ya está físicamente en el taller — solo
+ *  en estos tiene sentido ofrecer/gestionar un coche de sustitución. */
+const ESTADOS_CON_VEHICULO_EN_TALLER: EstadoOrden[] = ['recepcionado', 'en_proceso', 'listo'];
 
 const ESTADOS: { value: EstadoOrden; label: string; barra: string; fondo: string }[] = [
   { value: 'solicitado', label: 'Solicitado', barra: 'bg-slate-400', fondo: 'bg-slate-50' },
@@ -59,6 +66,21 @@ interface OrdenPanel {
   } | null;
   inspecciones_entrada: { fotos_urls: string[] | null }[] | null;
   piezas_usadas: { id: string }[] | null;
+  // Presente solo si esta orden nació de aceptar una solicitud del Portal
+  // de cliente (ver SolicitudesPanel) — mientras `vehiculos` sigue siendo
+  // null (coche aún no recibido), esto es lo único que hay para mostrar en
+  // la tarjeta.
+  solicitudes: {
+    nombre_cliente: string;
+    telefono_cliente: string | null;
+    email_cliente: string;
+    matricula: string | null;
+    marca: string | null;
+    modelo: string | null;
+  } | null;
+  coche_repuesto_id: string | null;
+  fecha_devolucion_repuesto: string | null;
+  coches_repuesto: { matricula: string; marca: string | null; modelo: string | null } | null;
 }
 
 interface ManagementPanelProps {
@@ -66,6 +88,11 @@ interface ManagementPanelProps {
    *  a la pantalla de entrega (checkout con segunda firma) en vez de un
    *  simple botón de avanzar estado. */
   onEntregar?: (ordenId: string) => void;
+  /** Si se pasa, las órdenes en estado "Solicitado" muestran un botón
+   *  "Recibir vehículo" que lleva al Check-in prellenado con los datos que
+   *  ya dio el cliente, en vez de un simple botón de avanzar estado (que
+   *  saltaría el check-in real: DNI, fotos, daños y firma). */
+  onRecibirDesdeSolicitud?: (pendiente: OrdenPendienteRecepcion) => void;
 }
 
 /** Primera foto subida en la inspección de entrada de una orden, si hay
@@ -79,7 +106,9 @@ function primeraFoto(orden: OrdenPanel): string | null {
 const SELECT_ORDENES =
   'id, estado, tipo_servicio, descripcion_averia, fecha_entrada, cita_recogida, motivo_cancelacion, ' +
   'vehiculos(matricula, marca, modelo, color, clientes(nombre, telefono, email)), ' +
-  'inspecciones_entrada(fotos_urls), piezas_usadas(id)';
+  'inspecciones_entrada(fotos_urls), piezas_usadas(id), ' +
+  'solicitudes(nombre_cliente, telefono_cliente, email_cliente, matricula, marca, modelo), ' +
+  'coche_repuesto_id, fecha_devolucion_repuesto, coches_repuesto(matricula, marca, modelo)';
 
 /**
  * Tablero de órdenes de trabajo agrupadas por estado, con un botón por
@@ -87,7 +116,7 @@ const SELECT_ORDENES =
  * también, en una pestaña aparte, las solicitudes que los clientes crean
  * ellos mismos desde el Portal de cliente.
  */
-export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
+export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud }: ManagementPanelProps) {
   const [pestana, setPestana] = useState<'ordenes' | 'solicitudes'>('ordenes');
   const [ordenes, setOrdenes] = useState<OrdenPanel[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -96,6 +125,8 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
   const [piezasModal, setPiezasModal] = useState<{ ordenId: string; matricula: string } | null>(null);
   const [citaModal, setCitaModal] = useState<OrdenPanel | null>(null);
   const [cancelarModal, setCancelarModal] = useState<OrdenPanel | null>(null);
+  const [repuestoModal, setRepuestoModal] = useState<OrdenPanel | null>(null);
+  const [devolviendoId, setDevolviendoId] = useState<string | null>(null);
 
   const cargarOrdenes = useCallback(async () => {
     setCargando(true);
@@ -144,6 +175,46 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
       return;
     }
     setOrdenes((prev) => prev.map((o) => (o.id === orden.id ? { ...o, estado: siguiente } : o)));
+  };
+
+  /** Botón "Recibir vehículo" de una orden 'solicitado': construye el
+   *  prellenado a partir de lo que el cliente dijo en su solicitud y se lo
+   *  pasa a App.tsx, que lleva al Check-in — el propio check-in hace el
+   *  update de esta orden al guardar (ver InspectionForm). */
+  const recibirVehiculo = (orden: OrdenPanel) => {
+    if (!onRecibirDesdeSolicitud) return;
+    const s = orden.solicitudes;
+    onRecibirDesdeSolicitud({
+      ordenId: orden.id,
+      nombre: s?.nombre_cliente ?? '',
+      telefono: s?.telefono_cliente ?? '',
+      email: s?.email_cliente ?? '',
+      matricula: s?.matricula ?? '',
+      marca: s?.marca ?? '',
+      modelo: s?.modelo ?? '',
+      tipoServicio: orden.tipo_servicio,
+      descripcionAveria: orden.descripcion_averia ?? '',
+      neumaticosCantidad: null,
+    });
+  };
+
+  const marcarRepuestoDevuelto = async (orden: OrdenPanel) => {
+    setDevolviendoId(orden.id);
+    setError(null);
+    const { error: updateError } = await supabase
+      .from('ordenes_trabajo')
+      .update({ fecha_devolucion_repuesto: new Date().toISOString() })
+      .eq('id', orden.id);
+    setDevolviendoId(null);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setOrdenes((prev) =>
+      prev.map((o) =>
+        o.id === orden.id ? { ...o, fecha_devolucion_repuesto: new Date().toISOString() } : o,
+      ),
+    );
   };
 
   const contadorPendientes = useSolicitudesPendientes();
@@ -224,6 +295,23 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
                       {ordenesColumna.length === 0 && <p className="text-xs text-gray-400">Sin órdenes.</p>}
                       {ordenesColumna.map((orden) => {
                         const foto = primeraFoto(orden);
+                        // Mientras la orden solo existe como seguimiento de
+                        // una solicitud aceptada (estado 'solicitado'),
+                        // `vehiculos` es null — se muestran los datos que
+                        // el cliente dio en su solicitud en su lugar.
+                        const matricula = orden.vehiculos?.matricula ?? orden.solicitudes?.matricula;
+                        const marcaModelo = [
+                          orden.vehiculos?.marca ?? orden.solicitudes?.marca,
+                          orden.vehiculos?.modelo ?? orden.solicitudes?.modelo,
+                        ]
+                          .filter(Boolean)
+                          .join(' ');
+                        const clienteNombre =
+                          orden.vehiculos?.clientes?.nombre ?? orden.solicitudes?.nombre_cliente;
+                        const clienteTelefono =
+                          orden.vehiculos?.clientes?.telefono ?? orden.solicitudes?.telefono_cliente;
+                        const tieneRepuestoActivo =
+                          orden.coche_repuesto_id !== null && orden.fecha_devolucion_repuesto === null;
                         return (
                           <div
                             key={orden.id}
@@ -244,11 +332,10 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-900">
                                   <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                                  <span className="truncate">{orden.vehiculos?.matricula ?? '—'}</span>
+                                  <span className="truncate">{matricula ?? '—'}</span>
                                 </div>
                                 <p className="truncate text-xs text-gray-500">
-                                  {[orden.vehiculos?.marca, orden.vehiculos?.modelo].filter(Boolean).join(' ') ||
-                                    'Sin marca/modelo'}
+                                  {marcaModelo || 'Sin marca/modelo'}
                                 </p>
                                 {orden.vehiculos?.color && (
                                   <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-gray-500">
@@ -262,11 +349,11 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
                               </div>
                             </div>
                             <p className="truncate text-xs text-gray-600">
-                              {orden.vehiculos?.clientes?.nombre ?? 'Cliente desconocido'}
+                              {clienteNombre ?? 'Cliente desconocido'}
                             </p>
-                            {orden.vehiculos?.clientes?.telefono && (
+                            {clienteTelefono && (
                               <p className="flex items-center gap-1 text-xs text-gray-400">
-                                <Phone className="h-3 w-3" /> {orden.vehiculos.clientes.telefono}
+                                <Phone className="h-3 w-3" /> {clienteTelefono}
                               </p>
                             )}
                             <p className="text-xs font-medium text-blue-600">
@@ -292,24 +379,67 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
                               </p>
                             )}
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setPiezasModal({
-                                  ordenId: orden.id,
-                                  matricula: orden.vehiculos?.matricula ?? '—',
-                                })
-                              }
-                              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100"
-                            >
-                              <Wrench className="h-3.5 w-3.5" />
-                              Piezas usadas
-                              {orden.piezas_usadas && orden.piezas_usadas.length > 0
-                                ? ` (${orden.piezas_usadas.length})`
-                                : ''}
-                            </button>
+                            {orden.estado !== 'solicitado' && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPiezasModal({
+                                    ordenId: orden.id,
+                                    matricula: matricula ?? '—',
+                                  })
+                                }
+                                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100"
+                              >
+                                <Wrench className="h-3.5 w-3.5" />
+                                Piezas usadas
+                                {orden.piezas_usadas && orden.piezas_usadas.length > 0
+                                  ? ` (${orden.piezas_usadas.length})`
+                                  : ''}
+                              </button>
+                            )}
 
-                            {orden.estado === 'listo' && onEntregar ? (
+                            {ESTADOS_CON_VEHICULO_EN_TALLER.includes(orden.estado) &&
+                              (tieneRepuestoActivo ? (
+                                <div className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-700">
+                                  <span className="flex items-start gap-1.5">
+                                    <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                    <span className="break-words">
+                                      Sustitución: {orden.coches_repuesto?.matricula ?? '—'}
+                                    </span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => marcarRepuestoDevuelto(orden)}
+                                    disabled={devolviendoId === orden.id}
+                                    className="mt-1 flex w-full items-center justify-center gap-1 rounded-md bg-white px-2 py-1 font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+                                  >
+                                    {devolviendoId === orden.id ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Undo2 className="h-3 w-3" />
+                                    )}
+                                    Devuelto
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setRepuestoModal(orden)}
+                                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                                >
+                                  <Truck className="h-3.5 w-3.5" /> Coche de sustitución
+                                </button>
+                              ))}
+
+                            {orden.estado === 'solicitado' && onRecibirDesdeSolicitud ? (
+                              <button
+                                type="button"
+                                onClick={() => recibirVehiculo(orden)}
+                                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-sky-700"
+                              >
+                                Recibir vehículo <ArrowRight className="h-3.5 w-3.5" />
+                              </button>
+                            ) : orden.estado === 'listo' && onEntregar ? (
                               <button
                                 type="button"
                                 onClick={() => onEntregar(orden.id)}
@@ -318,6 +448,7 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
                                 Entregar vehículo <ArrowRight className="h-3.5 w-3.5" />
                               </button>
                             ) : (
+                              orden.estado !== 'solicitado' &&
                               SIGUIENTE_ESTADO[orden.estado] && (
                                 <button
                                   type="button"
@@ -406,6 +537,17 @@ export default function ManagementPanel({ onEntregar }: ManagementPanelProps) {
             ),
           );
           setCancelarModal(null);
+        }}
+      />
+
+      <AsignarRepuestoModal
+        open={repuestoModal !== null}
+        ordenId={repuestoModal?.id ?? null}
+        matriculaCliente={repuestoModal?.vehiculos?.matricula ?? repuestoModal?.solicitudes?.matricula ?? '—'}
+        onClose={() => setRepuestoModal(null)}
+        onAsignado={() => {
+          setRepuestoModal(null);
+          cargarOrdenes();
         }}
       />
     </div>

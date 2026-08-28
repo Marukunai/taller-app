@@ -69,7 +69,11 @@ export interface Vehiculo {
 
 export interface OrdenTrabajo {
   id: string;
-  vehiculo_id: string;
+  // Nulo mientras la orden solo existe como seguimiento de una solicitud
+  // aceptada del Portal de cliente (estado 'solicitado') — se rellena al
+  // "Recibir vehículo" cuando el coche llega físicamente, ver
+  // `solicitud_id` más abajo.
+  vehiculo_id: string | null;
   estado: EstadoOrden;
   tipo_servicio: TipoServicio;
   descripcion_averia: string | null;
@@ -89,6 +93,17 @@ export interface OrdenTrabajo {
   // URL del informe PDF generado al entregar el vehículo (distinto del PDF
   // de entrada, que vive en inspecciones_entrada.pdf_informe_url).
   pdf_salida_url: string | null;
+  // Si esta orden nació de una solicitud del Portal de cliente aceptada
+  // (en vez de un check-in directo), referencia a esa solicitud — permite
+  // mostrar los datos que dio el cliente en el Panel de gestión mientras
+  // `vehiculo_id` sigue siendo null.
+  solicitud_id: string | null;
+  // Coche de sustitución prestado mientras dura esta orden (si se le
+  // prestó alguno) — ver `coches_repuesto` más abajo. `fecha_devolucion_
+  // repuesto` queda null mientras el préstamo sigue activo.
+  coche_repuesto_id: string | null;
+  fecha_prestamo_repuesto: string | null;
+  fecha_devolucion_repuesto: string | null;
 }
 
 export interface InspeccionEntrada {
@@ -143,6 +158,21 @@ export interface PiezaUsada {
   created_at: string;
 }
 
+/** Coche propio del taller que se presta a un cliente mientras dura el
+ *  servicio de su vehículo. Es un catálogo propio (como `Almacen`), no
+ *  ligado a ningún cliente en concreto — a quién se le presta cada uno se
+ *  guarda en `OrdenTrabajo.coche_repuesto_id`, no aquí. `baja` es un "dado
+ *  de baja" (se dejó de usar en la flota, p. ej. se vendió) sin borrar la
+ *  fila, para no perder el histórico de préstamos que lo referencian. */
+export interface CocheRepuesto {
+  id: string;
+  matricula: string;
+  marca: string | null;
+  modelo: string | null;
+  notas: string | null;
+  baja: boolean;
+}
+
 /** Rol de una cuenta de Supabase Auth: 'encargado' gestiona el taller
  *  entero (inventario, altas de personal, y todo lo que puede hacer un
  *  'mecanico' además); 'mecanico' es personal del taller con acceso a
@@ -171,15 +201,35 @@ export interface Perfil {
   activo: boolean;
 }
 
+/** Datos que se pasan del Panel de gestión al Check-in al pulsar "Recibir
+ *  vehículo" sobre una orden en estado 'solicitado' (nacida de aceptar una
+ *  solicitud del Portal de cliente) — para prellenar el formulario con lo
+ *  que el cliente ya dijo, sin tener que volver a teclearlo. El DNI nunca
+ *  se prellena (el Portal no lo pide) — se sigue pidiendo como siempre. */
+export interface OrdenPendienteRecepcion {
+  ordenId: string;
+  nombre: string;
+  telefono: string;
+  email: string;
+  matricula: string;
+  marca: string;
+  modelo: string;
+  tipoServicio: TipoServicio;
+  descripcionAveria: string;
+  neumaticosCantidad: NeumaticosCantidad | null;
+}
+
 export type EstadoSolicitud = 'pendiente' | 'aceptada' | 'rechazada' | 'cancelada';
 
 /** Petición de servicio que un cliente crea él mismo desde el Portal de
  *  cliente (sin pasar por el mecánico) — "quiero una revisión de
- *  mantenimiento", etc. Es un aviso previo, no un check-in: cuando el
- *  vehículo llega físicamente al taller, el check-in real (con fotos, daños
- *  y firma) se sigue haciendo desde el Check-in normal, igual que siempre —
- *  esta tabla solo mueve la conversación de "quiero pedir cita" al taller
- *  sin una llamada de teléfono. */
+ *  mantenimiento", etc. Al aceptarla, el personal ya obtiene una orden de
+ *  trabajo en estado 'solicitado' (ver `OrdenTrabajo.solicitud_id`) para
+ *  poder hacerle seguimiento en el Panel de gestión — pero SIN vehículo
+ *  real vinculado todavía: el check-in real (DNI, fotos, daños y firma) se
+ *  sigue haciendo desde el Check-in normal cuando el vehículo llega
+ *  físicamente al taller, completando esa misma orden en vez de crear una
+ *  nueva ("Recibir vehículo"). */
 export interface Solicitud {
   id: string;
   created_at: string;

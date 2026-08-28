@@ -234,6 +234,34 @@ exception when duplicate_object then
   null;
 end $$;
 
+-- 9. TABLA DE COCHES DE SUSTITUCIÓN (flota propia de préstamo)
+-- Catálogo propio del taller (como `almacenes`), independiente de
+-- clientes/vehículos/órdenes. A quién se le presta cada uno, y cuándo, se
+-- guarda en `ordenes_trabajo` (ver columnas añadidas más abajo) — un coche
+-- está "libre" si ninguna orden sin devolver lo tiene asignado. `baja` es
+-- un dado de baja de la flota (p. ej. se vendió) SIN borrar la fila, para
+-- no perder el histórico de préstamos que la referencian.
+create table if not exists coches_repuesto (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamp with time zone default now(),
+  matricula text not null unique,
+  marca text,
+  modelo text,
+  notas text,
+  baja boolean not null default false
+);
+
+-- Columnas añadidas a `ordenes_trabajo` en batches posteriores al DDL
+-- original de la tabla (arriba, sección 3) — con `alter table ... add
+-- column if not exists` porque referencian tablas (`solicitudes`,
+-- `coches_repuesto`) creadas más abajo en este mismo script, así que no
+-- podían ir en el CREATE TABLE inicial de la sección 3.
+alter table ordenes_trabajo add column if not exists solicitud_id uuid references solicitudes(id);
+alter table ordenes_trabajo
+  add column if not exists coche_repuesto_id uuid references coches_repuesto(id);
+alter table ordenes_trabajo add column if not exists fecha_prestamo_repuesto timestamp with time zone;
+alter table ordenes_trabajo add column if not exists fecha_devolucion_repuesto timestamp with time zone;
+
 -- =============================================================
 -- Row Level Security
 -- =============================================================
@@ -308,6 +336,23 @@ create policy "Cliente cancela su propia solicitud pendiente" on solicitudes
   for update
   using (auth.uid() = cliente_auth_id and estado = 'pendiente')
   with check (auth.uid() = cliente_auth_id and estado = 'cancelada');
+
+-- Coches de sustitución: CUALQUIER personal puede consultarlos (un
+-- mecánico necesita ver la flota para asignar uno al entregar el suyo al
+-- cliente), pero solo el ENCARGADO puede dar de alta/editar/dar de baja
+-- coches de la flota — igual que con almacenes/inventario. Asignar o
+-- devolver un coche a una orden concreta es un UPDATE sobre
+-- `ordenes_trabajo`, ya cubierto por "Personal Ordenes" de arriba (no hace
+-- falta ninguna política nueva para eso).
+alter table coches_repuesto enable row level security;
+create policy "Personal Coches Repuesto lectura" on coches_repuesto
+  for select using (es_personal());
+create policy "Encargado Coches Repuesto crea" on coches_repuesto
+  for insert with check (es_encargado());
+create policy "Encargado Coches Repuesto actualiza" on coches_repuesto
+  for update using (es_encargado()) with check (es_encargado());
+create policy "Encargado Coches Repuesto borra" on coches_repuesto
+  for delete using (es_encargado());
 
 -- =============================================================
 -- Storage: crea estos 3 buckets desde el panel de Supabase

@@ -25,8 +25,8 @@ cuentas de mecánico.
    [`supabase/schema.sql`](./supabase/schema.sql). Crea todas las tablas
    (`clientes`, `vehiculos`, `ordenes_trabajo`, `inspecciones_entrada`,
    `almacenes`, `inventario_items`, `piezas_usadas`, `perfiles`,
-   `solicitudes`), las políticas de RLS, la publicación de Realtime y unos
-   datos de prueba.
+   `solicitudes`, `coches_repuesto`), las políticas de RLS, la publicación
+   de Realtime y unos datos de prueba.
 2. Ve a **Storage** y crea estos 3 buckets, marcados como **Public**:
    - `fotos-vehiculos`
    - `firmas`
@@ -85,6 +85,16 @@ cuentas de mecánico.
 > [`supabase/gestion_personal_migration.sql`](./supabase/gestion_personal_migration.sql).
 > También idempotente — añade una única columna (`perfiles.activo`) y
 > actualiza las funciones de roles para tenerla en cuenta.
+>
+> Si tu proyecto ya tiene aplicado todo lo anterior y solo quieres añadir
+> que aceptar una solicitud del Portal de cliente cree ya una orden de
+> seguimiento en "Solicitado" (sección 14), ejecuta
+> [`supabase/solicitud_a_orden_migration.sql`](./supabase/solicitud_a_orden_migration.sql).
+> Y si además quieres la flota propia de coches de sustitución (sección 24),
+> ejecuta también
+> [`supabase/coches_repuesto_migration.sql`](./supabase/coches_repuesto_migration.sql).
+> Ambas son idempotentes e independientes entre sí — puedes ejecutar una
+> sin la otra.
 >
 > Si prefieres borrar todos los datos de prueba y empezar de cero en vez
 > de aplicar migraciones una a una, ejecuta primero
@@ -146,6 +156,7 @@ src/
     CitaRecogidaModal.tsx   # concierta cita de recogida y avisa al cliente ("Listo")
     CancelarOrdenModal.tsx  # cancela una orden de trabajo (pasa a "Cancelado")
     SolicitudesPanel.tsx    # revisión de solicitudes creadas por clientes (en tiempo real)
+    AsignarRepuestoModal.tsx # asigna un coche de sustitución libre de la flota a una orden
     ExitReportPdf.tsx        # plantilla del informe PDF de entrega/salida
   pages/
     InspectionForm.tsx    # formulario completo de check-in de entrada
@@ -156,11 +167,14 @@ src/
     HistorialVehiculo.tsx      # historial de un vehículo por matrícula
     ProximasRevisiones.tsx      # lista de vehículos a los que probablemente toca revisión
     ClientPortal.tsx              # portal del cliente (pedir servicio, ver solicitudes)
+    FlotaRepuestoPanel.tsx         # flota propia de coches de sustitución (solo encargado)
 supabase/
   schema.sql                     # DDL, políticas RLS, buckets, Realtime y seed data (todo al día)
   portal_taller_migration.sql    # migración incremental: almacenes, Portal de cliente, etc.
   roles_finos_migration.sql       # migración incremental: roles finos, historial, Realtime, etc.
   gestion_personal_migration.sql   # migración incremental: activo (des/reactivar cuentas)
+  solicitud_a_orden_migration.sql  # migración incremental: solicitud aceptada → orden "Solicitado"
+  coches_repuesto_migration.sql    # migración incremental: flota de coches de sustitución
   functions/
     enviar-aviso-cliente/         # Edge Function: email real de "vehículo listo"
     crear-cuenta-mecanico/         # Edge Function: alta de cuentas de mecánico desde la app
@@ -198,10 +212,14 @@ catálogo inicial de unos 55 items habituales de un taller mecánico
 generalista (aceites, filtros, frenos, neumáticos, correas, encendido,
 eléctrico, suspensión, refrigeración, escape y consumibles). Desde la app
 se puede: buscar por nombre o categoría, ajustar la cantidad con los
-botones +/-, y añadir items nuevos (nombre, categoría, talla/medida
-opcional, cantidad y una foto opcional para distinguir piezas parecidas).
-Las tarjetas de cada item son lo bastante grandes como para que el nombre
-nunca se corte con "..." — si es largo, ocupa dos líneas en vez de una.
+botones +/-, añadir items nuevos (nombre, categoría, talla/medida
+opcional, cantidad y una foto opcional para distinguir piezas parecidas), y
+**editar o borrar** cualquier item ya creado (icono de lápiz/papelera junto
+a cada tarjeta) — incluyendo cambiar o quitar su foto, sin tener que
+volver a crearlo desde cero. Borrar pide una confirmación explícita en dos
+pasos. Las tarjetas de cada item son lo bastante grandes como para que el
+nombre nunca se corte con "..." — si es largo, ocupa dos líneas en vez de
+una.
 
 Si el taller es una cadena con más de una nave, cada una puede tener su
 propio almacén/stock independiente: en cuanto se crea un segundo almacén
@@ -322,7 +340,12 @@ Pestaña **"Personal"**, visible solo para el encargado, con:
   `crear-cuenta-mecanico`, que comprueba que quien la invoca es
   efectivamente un encargado antes de crear la cuenta (usa la clave
   `service_role` de Supabase, así que no puede hacerse directamente desde
-  el frontend con la clave `anon`).
+  el frontend con la clave `anon`). No hay un formulario separado para dar
+  de alta un **encargado** nuevo directamente: se crea como mecánico con
+  este mismo formulario y luego se asciende con **Editar** (ver más abajo)
+  — así solo hay un flujo de alta que mantener. La única cuenta que se crea
+  como encargado desde el primer momento es la primera de todas, a mano en
+  el dashboard de Supabase (sección 2, paso 3).
 - Un listado de todas las cuentas del taller (encargados y mecánicos), cada
   una con:
   - **Editar**: cambiar el nombre, el email o el rol (ascender un mecánico
@@ -392,17 +415,28 @@ Una vez dentro, el cliente puede:
   Cancelada) y la nota que el taller haya dejado al aceptar o rechazar.
 - Cancelar una solicitud propia mientras siga "Pendiente".
 
-Una solicitud es un **aviso previo, no un check-in**: aceptarla no crea
-ninguna orden de trabajo ni fila en `clientes`/`vehiculos` todavía — el
-check-in real (fotos, daños marcados, firma) se sigue haciendo desde el
-Check-in normal, exactamente igual que siempre, cuando el vehículo llega
-físicamente al taller. El personal revisa las solicitudes desde una
-pestaña **"Solicitudes de clientes"** dentro del Panel de gestión (con un
-contador de pendientes), donde puede aceptar o rechazar cada una con una
-nota corta opcional para el cliente (p. ej. "Te esperamos el jueves a las
-9h"). Tanto el contador como el listado se actualizan solos, sin recargar
-la página, en cuanto un cliente crea o cancela una solicitud — ver
-sección 19.
+Una solicitud es un **aviso previo, no un check-in**: al aceptarla se crea
+ya una orden de trabajo de seguimiento en estado **"Solicitado"** — visible
+en la columna correspondiente del Panel de gestión, con los datos que el
+cliente ya dio (nombre, teléfono, matrícula...) — pero todavía **sin**
+ninguna fila real en `clientes`/`vehiculos`: el check-in real (DNI, fotos,
+daños marcados y firma) se sigue haciendo desde el Check-in normal cuando
+el vehículo llega físicamente al taller. Esa tarjeta "Solicitado" tiene un
+botón **"Recibir vehículo"** que lleva directamente al Check-in con el
+nombre, teléfono, email, matrícula, marca/modelo y tipo de servicio ya
+rellenados (un aviso en la parte superior lo deja claro, y se puede
+descartar para hacer un check-in normal en su lugar) — solo falta
+completar el DNI, las fotos, los daños y la firma. Al guardar, se completa
+esa misma orden (pasa a "Recepcionado") en vez de crear una nueva, así que
+la tarjeta no se duplica en el tablero. Rechazar una solicitud, en cambio,
+no crea ninguna orden.
+
+El personal revisa las solicitudes desde una pestaña **"Solicitudes de
+clientes"** dentro del Panel de gestión (con un contador de pendientes),
+donde puede aceptar o rechazar cada una con una nota corta opcional para
+el cliente (p. ej. "Te esperamos el jueves a las 9h"). Tanto el contador
+como el listado se actualizan solos, sin recargar la página, en cuanto un
+cliente crea o cancela una solicitud — ver sección 19.
 
 ## 15. Avisar al cliente cuando el vehículo está listo
 
@@ -582,12 +616,32 @@ ve al panel **Storage** de tu proyecto Supabase, entra en cada uno de los
 3 buckets (`fotos-vehiculos`, `firmas`, `documentos-pdf`), selecciona
 todos los archivos y bórralos desde ahí.
 
-## 24. Próximos pasos sugeridos (fuera de este MVP)
+## 24. Coche de sustitución (flota propia)
+
+Pestaña **"Flota"**, visible solo para el encargado, para gestionar los
+coches propios del taller que se prestan a un cliente mientras dura el
+servicio del suyo. Es un catálogo propio (como los almacenes de
+Inventario), independiente de clientes/vehículos: se puede dar de alta un
+coche (matrícula, marca, modelo y notas opcionales), editarlo, y **dar de
+baja** uno que deje de estar disponible (por ejemplo, se vendió) sin
+borrarlo — así no se pierde el histórico de préstamos que lo referencian;
+un coche dado de baja se puede reactivar en cualquier momento.
+
+La disponibilidad de cada coche (**Libre** o **Prestado**, con la
+matrícula del cliente y la fecha desde la que lo tiene) no se guarda a
+mano en ningún sitio: se calcula sola comprobando si alguna orden de
+trabajo lo tiene asignado sin devolver todavía. Asignar o devolver un coche concreto a un cliente no se
+hace desde "Flota", sino desde la propia tarjeta de la orden en el Panel
+de gestión (visible mientras el vehículo del cliente está físicamente en
+el taller: Recepcionado, En proceso o Listo): un botón **"Coche de
+sustitución"** abre un modal con los coches libres de la flota para
+elegir uno, y una vez asignado la tarjeta muestra su matrícula con un
+botón **"Devuelto"** para cerrar el préstamo cuando el cliente lo trae de
+vuelta.
+
+## 25. Próximos pasos sugeridos (fuera de este MVP)
 
 - Panel de gestión con calendario (`@fullcalendar/react`) para entradas/salidas.
-- Que aceptar una solicitud del Portal de cliente pueda crear directamente
-  un borrador de cliente/vehículo, para no volver a teclear los mismos
-  datos en el Check-in cuando el coche llega físicamente.
 - Sugerir automáticamente el precio/coste de las piezas usadas en la
   factura final (hoy `piezas_usadas` no guarda precio, solo cantidad) —
   recordando que, si se añade, el mecánico no debe verlo (sección 12).

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   Camera,
@@ -11,13 +11,20 @@ import {
   Trash2,
   User,
   Wrench,
+  X,
 } from 'lucide-react';
 import { supabase, BUCKETS } from '../lib/supabase';
 import CarDamagePicker from '../components/CarDamagePicker';
 import SignatureModal from '../components/SignatureModal';
 import { generarYSubirInformePdf } from '../lib/generateReportPdf';
 import { buildWhatsAppLink } from '../lib/whatsapp';
-import type { DanoMarcador, NeumaticosCantidad, NivelCombustible, TipoServicio } from '../lib/types';
+import type {
+  DanoMarcador,
+  NeumaticosCantidad,
+  NivelCombustible,
+  OrdenPendienteRecepcion,
+  TipoServicio,
+} from '../lib/types';
 
 const NIVELES_COMBUSTIBLE: NivelCombustible[] = ['1/4', '1/2', '3/4', 'Lleno'];
 const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
@@ -42,7 +49,23 @@ interface FotoPendiente {
   previewUrl: string;
 }
 
-export default function InspectionForm() {
+interface InspectionFormProps {
+  /** Si se pasa (viene de pulsar "Recibir vehículo" en el Panel de gestión
+   *  sobre una orden 'solicitado'), el formulario se prellena con lo que
+   *  el cliente ya dijo en su solicitud y, al guardar, completa ESA orden
+   *  (update) en vez de crear una nueva (insert). */
+  ordenPendiente?: OrdenPendienteRecepcion | null;
+  /** Se llama al terminar de recibir el vehículo (guardado con éxito) o al
+   *  descartar el prellenado con el botón de cerrar del aviso — para que
+   *  App.tsx deje de pasar el mismo `ordenPendiente` la próxima vez que se
+   *  entre en esta pestaña. */
+  onOrdenPendienteCompletada?: () => void;
+}
+
+export default function InspectionForm({
+  ordenPendiente,
+  onOrdenPendienteCompletada,
+}: InspectionFormProps) {
   // Datos de cliente y vehículo
   const [nombre, setNombre] = useState('');
   const [dni, setDni] = useState('');
@@ -75,6 +98,26 @@ export default function InspectionForm() {
   const [resultado, setResultado] = useState<{ pdfUrl: string; whatsappUrl: string } | null>(
     null,
   );
+
+  // Prellenar con lo que el cliente ya dijo en su solicitud, al llegar
+  // desde "Recibir vehículo" en el Panel de gestión. El DNI nunca se
+  // prellena (el Portal no lo pide) — se sigue pidiendo como siempre.
+  useEffect(() => {
+    if (!ordenPendiente) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNombre(ordenPendiente.nombre);
+    setTelefono(ordenPendiente.telefono);
+    setEmail(ordenPendiente.email);
+    setMatricula(ordenPendiente.matricula);
+    setMarca(ordenPendiente.marca);
+    setModelo(ordenPendiente.modelo);
+    setTipoServicio(ordenPendiente.tipoServicio);
+    setDescripcionAveria(ordenPendiente.descripcionAveria);
+    if (ordenPendiente.neumaticosCantidad) {
+      setNeumaticosCantidad(ordenPendiente.neumaticosCantidad);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordenPendiente?.ordenId]);
 
   const handleFotosSeleccionadas = (e: React.ChangeEvent<HTMLInputElement>) => {
     const archivos = Array.from(e.target.files ?? []);
@@ -192,20 +235,27 @@ export default function InspectionForm() {
         neumaticoFotoUrl = publicUrl;
       }
 
-      // 4. Orden de trabajo
-      const { data: orden, error: ordenError } = await supabase
-        .from('ordenes_trabajo')
-        .insert({
-          vehiculo_id: vehiculo.id,
-          estado: 'recepcionado',
-          tipo_servicio: tipoServicio,
-          descripcion_averia: descripcionAveria || null,
-          fecha_entrada: new Date().toISOString(),
-          neumaticos_cantidad: tipoServicio === 'neumaticos' ? neumaticosCantidad : null,
-          neumaticos_foto_url: neumaticoFotoUrl,
-        })
-        .select()
-        .single();
+      // 4. Orden de trabajo — si venimos de "Recibir vehículo" (una orden
+      // 'solicitado' que ya existía por haber aceptado una solicitud del
+      // Portal de cliente), se completa ESA orden con un update en vez de
+      // crear una nueva, para no duplicar la tarjeta en el Panel de gestión.
+      const datosOrden = {
+        vehiculo_id: vehiculo.id,
+        estado: 'recepcionado',
+        tipo_servicio: tipoServicio,
+        descripcion_averia: descripcionAveria || null,
+        fecha_entrada: new Date().toISOString(),
+        neumaticos_cantidad: tipoServicio === 'neumaticos' ? neumaticosCantidad : null,
+        neumaticos_foto_url: neumaticoFotoUrl,
+      };
+      const { data: orden, error: ordenError } = ordenPendiente
+        ? await supabase
+            .from('ordenes_trabajo')
+            .update(datosOrden)
+            .eq('id', ordenPendiente.ordenId)
+            .select()
+            .single()
+        : await supabase.from('ordenes_trabajo').insert(datosOrden).select().single();
       if (ordenError) throw ordenError;
 
       // 5. Subida de fotos al bucket 'fotos-vehiculos'
@@ -279,6 +329,7 @@ export default function InspectionForm() {
       }
 
       resetFormulario();
+      onOrdenPendienteCompletada?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo guardar la inspección.');
       setGuardando(false);
@@ -298,6 +349,28 @@ export default function InspectionForm() {
           </p>
         </div>
       </header>
+
+      {ordenPendiente && (
+        <div className="mb-6 flex items-start justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+          <p>
+            Recibiendo el vehículo de una solicitud aceptada — se han rellenado los datos que ya
+            dio el cliente. Completa el DNI, las fotos, los daños y la firma como en cualquier
+            check-in.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              resetFormulario();
+              onOrdenPendienteCompletada?.();
+            }}
+            className="shrink-0 rounded-full p-1 text-sky-400 hover:bg-sky-100 hover:text-sky-600"
+            aria-label="Descartar y hacer un check-in normal"
+            title="Descartar y hacer un check-in normal"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <Seccion titulo="Cliente" icono={<User className="h-4 w-4" />} color="blue">

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   AlertTriangle,
+  Car,
   ClipboardCheck,
   History,
   KanbanSquare,
@@ -25,7 +26,8 @@ import PersonnelPanel from './pages/PersonnelPanel';
 import HistorialVehiculo from './pages/HistorialVehiculo';
 import ProximasRevisiones from './pages/ProximasRevisiones';
 import ClientPortal from './pages/ClientPortal';
-import type { Perfil } from './lib/types';
+import FlotaRepuestoPanel from './pages/FlotaRepuestoPanel';
+import type { OrdenPendienteRecepcion, Perfil } from './lib/types';
 
 type Vista =
   | 'checkin'
@@ -34,7 +36,8 @@ type Vista =
   | 'inventario'
   | 'gestion_personal'
   | 'historial'
-  | 'proximas';
+  | 'proximas'
+  | 'flota_repuesto';
 type VistaPublica = 'personal' | 'cliente';
 
 function App() {
@@ -45,6 +48,11 @@ function App() {
   const [cargandoPerfil, setCargandoPerfil] = useState(false);
   const [vista, setVista] = useState<Vista>('checkin');
   const [ordenCheckoutId, setOrdenCheckoutId] = useState<string | null>(null);
+  // Prellenado del Check-in al pulsar "Recibir vehículo" en el Panel de
+  // gestión, sobre una orden 'solicitado' nacida de aceptar una solicitud
+  // del Portal de cliente — ver ManagementPanel/InspectionForm.
+  const [ordenRecepcionPendiente, setOrdenRecepcionPendiente] =
+    useState<OrdenPendienteRecepcion | null>(null);
   // Se activa cuando Supabase Auth dispara 'PASSWORD_RECOVERY' (enlace del
   // email de restablecimiento) — independiente del rol/perfil, se muestra
   // ANTES de intentar cargar el perfil, tanto si el enlace lo pidió la
@@ -129,6 +137,11 @@ function App() {
   const irACheckout = (ordenId: string) => {
     setOrdenCheckoutId(ordenId);
     setVista('checkout');
+  };
+
+  const irARecibirVehiculo = (pendiente: OrdenPendienteRecepcion) => {
+    setOrdenRecepcionPendiente(pendiente);
+    setVista('checkin');
   };
 
   if (cargandoSesion) {
@@ -226,7 +239,10 @@ function App() {
 
             <TabButton
               activo={vista === 'checkin'}
-              onClick={() => setVista('checkin')}
+              onClick={() => {
+                setOrdenRecepcionPendiente(null);
+                setVista('checkin');
+              }}
               icon={<ClipboardCheck className="h-4 w-4" />}
             >
               Check-in
@@ -280,6 +296,15 @@ function App() {
                 Personal
               </TabButton>
             )}
+            {esEncargado && (
+              <TabButton
+                activo={vista === 'flota_repuesto'}
+                onClick={() => setVista('flota_repuesto')}
+                icon={<Car className="h-4 w-4" />}
+              >
+                Flota
+              </TabButton>
+            )}
           </div>
 
           <div className="ml-auto shrink-0 border-l border-white/25 pl-4">
@@ -293,8 +318,15 @@ function App() {
         </div>
       </nav>
 
-      {vista === 'checkin' && <InspectionForm />}
-      {vista === 'panel' && <ManagementPanel onEntregar={irACheckout} />}
+      {vista === 'checkin' && (
+        <InspectionForm
+          ordenPendiente={ordenRecepcionPendiente}
+          onOrdenPendienteCompletada={() => setOrdenRecepcionPendiente(null)}
+        />
+      )}
+      {vista === 'panel' && (
+        <ManagementPanel onEntregar={irACheckout} onRecibirDesdeSolicitud={irARecibirVehiculo} />
+      )}
       {vista === 'checkout' && (
         <CheckoutForm ordenIdInicial={ordenCheckoutId} onEntregado={() => setVista('panel')} />
       )}
@@ -302,6 +334,7 @@ function App() {
       {vista === 'proximas' && <ProximasRevisiones />}
       {vista === 'inventario' && esEncargado && <InventoryPanel />}
       {vista === 'gestion_personal' && esEncargado && <PersonnelPanel miId={session.user.id} />}
+      {vista === 'flota_repuesto' && esEncargado && <FlotaRepuestoPanel />}
     </div>
   );
 }

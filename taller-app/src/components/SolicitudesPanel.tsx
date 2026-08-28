@@ -28,12 +28,15 @@ const ESTADO_BADGE: Record<EstadoSolicitud, { label: string; clase: string }> = 
 
 /**
  * Revisión de las solicitudes de servicio que los clientes crean ellos
- * mismos desde el Portal de cliente (sin pasar por el mecánico). Es un
- * aviso previo, no un check-in: aceptar una solicitud no crea ninguna orden
- * de trabajo todavía — eso se sigue haciendo desde el Check-in normal
- * cuando el vehículo llega físicamente al taller. Aquí el personal solo
- * decide si acepta o rechaza la petición, con una nota corta opcional que
- * el cliente verá en su propio portal (p. ej. "Te esperamos el jueves").
+ * mismos desde el Portal de cliente (sin pasar por el mecánico). Al
+ * aceptar una, además de guardar la respuesta se crea ya una orden de
+ * trabajo en estado "Solicitado" (ver `responder` más abajo) para que
+ * aparezca en el Panel de gestión y se le pueda hacer seguimiento — pero
+ * SIN vehículo real vinculado todavía: el check-in real (DNI, fotos, daños
+ * y firma) se sigue haciendo desde el Check-in normal cuando el vehículo
+ * llega físicamente al taller, completando esa misma orden ("Recibir
+ * vehículo") en vez de crear una nueva. Rechazar una solicitud no crea
+ * ninguna orden.
  */
 export default function SolicitudesPanel() {
   const [solicitudes, setSolicitudes] = useState<Solicitud[]>([]);
@@ -102,11 +105,34 @@ export default function SolicitudesPanel() {
       .from('solicitudes')
       .update({ estado, respuesta_taller: respuesta })
       .eq('id', solicitud.id);
-    setProcesandoId(null);
     if (updateError) {
+      setProcesandoId(null);
       setError(updateError.message);
       return;
     }
+
+    // Al aceptar, se crea ya una orden de seguimiento en estado
+    // "Solicitado" — todavía sin vehículo real vinculado (eso se rellena
+    // al "Recibir vehículo" desde el Panel de gestión cuando el coche
+    // llega físicamente, ver ManagementPanel/InspectionForm).
+    if (estado === 'aceptada') {
+      const { error: ordenError } = await supabase.from('ordenes_trabajo').insert({
+        estado: 'solicitado',
+        tipo_servicio: solicitud.tipo_servicio,
+        descripcion_averia: solicitud.descripcion,
+        neumaticos_cantidad: solicitud.neumaticos_cantidad,
+        solicitud_id: solicitud.id,
+      });
+      if (ordenError) {
+        setProcesandoId(null);
+        setError(
+          `La solicitud se aceptó, pero no se pudo crear la orden de seguimiento: ${ordenError.message}`,
+        );
+        return;
+      }
+    }
+
+    setProcesandoId(null);
     setSolicitudes((prev) =>
       prev.map((s) => (s.id === solicitud.id ? { ...s, estado, respuesta_taller: respuesta } : s)),
     );

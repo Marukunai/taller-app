@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ImagePlus, Loader2, Minus, Package, Plus, Search, Warehouse, X } from 'lucide-react';
+import { ImagePlus, Loader2, Minus, Package, Pencil, Plus, Search, Trash2, Warehouse, X } from 'lucide-react';
 import { supabase, BUCKETS } from '../lib/supabase';
 import type { Almacen, InventarioItem } from '../lib/types';
 
@@ -69,6 +69,18 @@ export default function InventoryPanel() {
   const [form, setForm] = useState<NuevoItemForm>(FORM_VACIO);
   const [guardandoItem, setGuardandoItem] = useState(false);
   const [actualizandoId, setActualizandoId] = useState<string | null>(null);
+
+  // Edición/borrado de items ya existentes (dar de alta usa `form` arriba,
+  // esto es aparte porque coexisten: se puede editar un item mientras el
+  // formulario de "Nuevo item" está abierto).
+  const [itemEditando, setItemEditando] = useState<string | null>(null);
+  const [formEdicion, setFormEdicion] = useState<NuevoItemForm & { imagenUrlActual: string | null }>({
+    ...FORM_VACIO,
+    imagenUrlActual: null,
+  });
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+  const [confirmandoBorradoId, setConfirmandoBorradoId] = useState<string | null>(null);
+  const [borrandoId, setBorrandoId] = useState<string | null>(null);
 
   const cargarAlmacenes = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -239,6 +251,97 @@ export default function InventoryPanel() {
     } finally {
       setGuardandoItem(false);
     }
+  };
+
+  const abrirEdicion = (item: InventarioItem) => {
+    setConfirmandoBorradoId(null);
+    setItemEditando(item.id);
+    setFormEdicion({
+      nombre: item.nombre,
+      tipo: item.tipo,
+      tamano: item.tamano ?? '',
+      cantidad: String(item.cantidad),
+      imagenFile: null,
+      imagenPreview: null,
+      imagenUrlActual: item.imagen_url,
+    });
+  };
+
+  const cerrarEdicion = () => {
+    setItemEditando(null);
+    setFormEdicion({ ...FORM_VACIO, imagenUrlActual: null });
+  };
+
+  const handleImagenEdicionSeleccionada = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFormEdicion((prev) => ({ ...prev, imagenFile: file, imagenPreview: URL.createObjectURL(file) }));
+  };
+
+  const quitarImagenEdicion = () => {
+    setFormEdicion((prev) => ({ ...prev, imagenFile: null, imagenPreview: null, imagenUrlActual: null }));
+  };
+
+  const guardarEdicion = async (e: FormEvent, item: InventarioItem) => {
+    e.preventDefault();
+    if (!formEdicion.nombre.trim() || !formEdicion.tipo.trim()) {
+      setError('El nombre y la categoría del item son obligatorios.');
+      return;
+    }
+    setGuardandoEdicion(true);
+    setError(null);
+    try {
+      let imagenUrl = formEdicion.imagenUrlActual;
+      if (formEdicion.imagenFile) {
+        const ruta = `${crypto.randomUUID()}-${formEdicion.imagenFile.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from(BUCKETS.inventarioImagenes)
+          .upload(ruta, formEdicion.imagenFile, { upsert: true });
+        if (uploadError) throw uploadError;
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from(BUCKETS.inventarioImagenes).getPublicUrl(ruta);
+        imagenUrl = publicUrl;
+      }
+
+      const { data, error: updateError } = await supabase
+        .from('inventario_items')
+        .update({
+          nombre: formEdicion.nombre.trim(),
+          tipo: formEdicion.tipo.trim(),
+          tamano: formEdicion.tamano.trim() || null,
+          cantidad: Number(formEdicion.cantidad) || 0,
+          imagen_url: imagenUrl,
+        })
+        .eq('id', item.id)
+        .select()
+        .single();
+      if (updateError) throw updateError;
+
+      setItems((prev) => prev.map((i) => (i.id === item.id ? (data as InventarioItem) : i)));
+      cerrarEdicion();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `No se pudo guardar el item: ${err.message}`
+          : 'No se pudo guardar el item.',
+      );
+    } finally {
+      setGuardandoEdicion(false);
+    }
+  };
+
+  const borrarItem = async (item: InventarioItem) => {
+    setBorrandoId(item.id);
+    setError(null);
+    const { error: deleteError } = await supabase.from('inventario_items').delete().eq('id', item.id);
+    setBorrandoId(null);
+    if (deleteError) {
+      setError(`No se pudo borrar el item: ${deleteError.message}`);
+      return;
+    }
+    setItems((prev) => prev.filter((i) => i.id !== item.id));
+    setConfirmandoBorradoId(null);
   };
 
   return (
@@ -514,66 +617,214 @@ export default function InventoryPanel() {
                     largo — se permite que ocupe 2 líneas en vez de
                     truncarse en una sola. */}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {itemsGrupo.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
-                    >
-                      {item.imagen_url ? (
-                        <img
-                          src={item.imagen_url}
-                          alt=""
-                          className="h-16 w-16 shrink-0 rounded-lg border border-gray-100 object-cover"
-                        />
-                      ) : (
-                        <span
-                          className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-lg ${color.bg} ${color.text}`}
+                  {itemsGrupo.map((item) =>
+                    itemEditando === item.id ? (
+                      <form
+                        key={item.id}
+                        onSubmit={(e) => guardarEdicion(e, item)}
+                        className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 sm:col-span-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-semibold text-gray-800">Editar item</h3>
+                          <button
+                            type="button"
+                            onClick={cerrarEdicion}
+                            className="rounded-full p-1 text-gray-400 hover:bg-white hover:text-gray-600"
+                            aria-label="Cancelar edición"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-gray-700">Nombre</label>
+                            <input
+                              value={formEdicion.nombre}
+                              onChange={(e) => setFormEdicion((p) => ({ ...p, nombre: e.target.value }))}
+                              required
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-gray-700">Categoría</label>
+                            <input
+                              value={formEdicion.tipo}
+                              onChange={(e) => setFormEdicion((p) => ({ ...p, tipo: e.target.value }))}
+                              required
+                              list="tipos-existentes"
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-gray-700">
+                              Talla / medida
+                            </label>
+                            <input
+                              value={formEdicion.tamano}
+                              onChange={(e) => setFormEdicion((p) => ({ ...p, tamano: e.target.value }))}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-gray-700">Cantidad</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={formEdicion.cantidad}
+                              onChange={(e) => setFormEdicion((p) => ({ ...p, cantidad: e.target.value }))}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-medium text-gray-700">Foto</label>
+                          <div className="flex items-center gap-3">
+                            {formEdicion.imagenPreview || formEdicion.imagenUrlActual ? (
+                              <img
+                                src={formEdicion.imagenPreview ?? formEdicion.imagenUrlActual ?? undefined}
+                                alt=""
+                                className="h-14 w-14 rounded-lg border border-gray-200 object-cover"
+                              />
+                            ) : (
+                              <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 text-gray-400">
+                                <Package className="h-5 w-5" />
+                              </span>
+                            )}
+                            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-600 hover:border-gray-400">
+                              <ImagePlus className="h-3.5 w-3.5" />
+                              {formEdicion.imagenUrlActual || formEdicion.imagenPreview
+                                ? 'Cambiar foto'
+                                : 'Añadir foto'}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleImagenEdicionSeleccionada}
+                                className="hidden"
+                              />
+                            </label>
+                            {(formEdicion.imagenUrlActual || formEdicion.imagenPreview) && (
+                              <button
+                                type="button"
+                                onClick={quitarImagenEdicion}
+                                className="text-xs font-medium text-gray-400 hover:text-red-600"
+                              >
+                                Quitar foto
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={guardandoEdicion}
+                          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                         >
-                          <Package className="h-6 w-6" />
-                        </span>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="break-words text-base font-medium leading-snug text-gray-900">
-                          {item.nombre}
-                        </p>
-                        {item.tamano && <p className="text-sm text-gray-500">{item.tamano}</p>}
-                        {item.cantidad === 0 ? (
-                          <span className="mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">
-                            Agotado
-                          </span>
+                          {guardandoEdicion && <Loader2 className="h-4 w-4 animate-spin" />}
+                          {guardandoEdicion ? 'Guardando...' : 'Guardar cambios'}
+                        </button>
+                      </form>
+                    ) : (
+                      <div
+                        key={item.id}
+                        className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+                      >
+                        {item.imagen_url ? (
+                          <img
+                            src={item.imagen_url}
+                            alt=""
+                            className="h-16 w-16 shrink-0 rounded-lg border border-gray-100 object-cover"
+                          />
                         ) : (
-                          item.cantidad <= 3 && (
-                            <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                              Pocas unidades
+                          <span
+                            className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-lg ${color.bg} ${color.text}`}
+                          >
+                            <Package className="h-6 w-6" />
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-base font-medium leading-snug text-gray-900">
+                            {item.nombre}
+                          </p>
+                          {item.tamano && <p className="text-sm text-gray-500">{item.tamano}</p>}
+                          {item.cantidad === 0 ? (
+                            <span className="mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">
+                              Agotado
                             </span>
-                          )
+                          ) : (
+                            item.cantidad <= 3 && (
+                              <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                Pocas unidades
+                              </span>
+                            )
+                          )}
+                        </div>
+                        {confirmandoBorradoId === item.id ? (
+                          <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
+                            <span className="text-xs text-gray-500">¿Borrar item?</span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => borrarItem(item)}
+                                disabled={borrandoId === item.id}
+                                className="rounded-full bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                              >
+                                {borrandoId === item.id ? '...' : 'Sí, borrar'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmandoBorradoId(null)}
+                                className="rounded-full border border-gray-200 px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-50"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => ajustarCantidad(item, -1)}
+                              disabled={actualizandoId === item.id || item.cantidad === 0}
+                              className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                              aria-label="Quitar una unidad"
+                            >
+                              <Minus className="h-4 w-4" />
+                            </button>
+                            <span className="w-7 text-center text-base font-semibold text-gray-900">
+                              {item.cantidad}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => ajustarCantidad(item, 1)}
+                              disabled={actualizandoId === item.id}
+                              className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                              aria-label="Añadir una unidad"
+                            >
+                              <Plus className="h-4 w-4" />
+                            </button>
+                            <span className="mx-1 h-5 w-px bg-gray-200" />
+                            <button
+                              type="button"
+                              onClick={() => abrirEdicion(item)}
+                              className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50"
+                              aria-label="Editar item"
+                              title="Editar item"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmandoBorradoId(item.id)}
+                              className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                              aria-label="Borrar item"
+                              title="Borrar item"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         )}
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => ajustarCantidad(item, -1)}
-                          disabled={actualizandoId === item.id || item.cantidad === 0}
-                          className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-                          aria-label="Quitar una unidad"
-                        >
-                          <Minus className="h-4 w-4" />
-                        </button>
-                        <span className="w-7 text-center text-base font-semibold text-gray-900">
-                          {item.cantidad}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => ajustarCantidad(item, 1)}
-                          disabled={actualizandoId === item.id}
-                          className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-                          aria-label="Añadir una unidad"
-                        >
-                          <Plus className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    ),
+                  )}
                 </div>
               </section>
             );
