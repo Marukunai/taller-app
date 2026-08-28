@@ -338,7 +338,7 @@ function App() {
          *  partir de `md` se muestran en línea como siempre; por debajo de
          *  eso quedan ocultas detrás del botón de hamburguesa y aparecen
          *  como un desplegable apilado. */}
-        <div className="flex w-full items-center gap-3">
+        <div className="flex w-full flex-wrap items-center gap-3">
           <div className="flex shrink-0 items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white">
               <Wrench className="h-4 w-4" />
