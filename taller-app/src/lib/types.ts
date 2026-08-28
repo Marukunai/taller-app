@@ -247,4 +247,51 @@ export interface Solicitud {
   // Nota corta del taller al aceptar/rechazar (p. ej. "Te esperamos el
   // jueves a las 9h"), visible para el cliente en su propio portal.
   respuesta_taller: string | null;
+  // Fecha/hora que el cliente propone para TRAER el vehículo (check-in),
+  // elegida al crear la solicitud desde el Portal — con la misma
+  // sencillez que la cita de recogida (sin gestión de franjas/aforo).
+  fecha_cita_checkin: string | null;
+}
+
+/** Precio de un item de inventario — en tabla APARTE de `InventarioItem` a
+ *  propósito: solo el encargado puede leer/escribir esto (ver RLS en
+ *  schema.sql), así un mecánico nunca ve coste alguno aunque inspeccione
+ *  las peticiones de red de la pantalla de Inventario que sí puede usar. */
+export interface InventarioPrecio {
+  item_id: string;
+  precio_unitario: number;
+}
+
+export type EstadoPresupuesto = 'borrador' | 'enviado' | 'aprobado' | 'rechazado';
+
+/** Presupuesto/factura interna de una orden de trabajo — documento de
+ *  gestión interna (NO una factura fiscal válida ante Hacienda: sin
+ *  numeración correlativa oficial ni desglose de IVA) que resume mano de
+ *  obra + piezas usadas. Lo crea/edita el encargado; si la orden viene de
+ *  una solicitud del Portal, el cliente puede verlo y aprobarlo/rechazarlo
+ *  desde su cuenta. Una orden tiene como mucho un presupuesto. */
+export interface Presupuesto {
+  id: string;
+  orden_id: string;
+  solicitud_id: string | null;
+  concepto_mano_obra: string | null;
+  precio_mano_obra: number;
+  estado: EstadoPresupuesto;
+  nota_cliente: string | null;
+  created_at: string;
+  enviado_en: string | null;
+  respondido_en: string | null;
+  factura_pdf_url: string | null;
+}
+
+/** Línea de detalle de un presupuesto — snapshot del precio en el momento
+ *  en que el encargado lo calculó (recalculado desde `piezas_usadas` +
+ *  `inventario_precios`, no sincronizado automáticamente). */
+export interface PresupuestoPieza {
+  id: string;
+  presupuesto_id: string;
+  pieza_usada_id: string | null;
+  nombre_item: string;
+  cantidad: number;
+  precio_unitario: number;
 }

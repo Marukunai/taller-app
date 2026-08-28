@@ -3,6 +3,7 @@ import { CheckCircle2, ExternalLink, ImageOff, Loader2, MessageCircle, PenLine, 
 import { supabase } from '../lib/supabase';
 import SignatureModal from '../components/SignatureModal';
 import { generarYSubirInformeSalida } from '../lib/generateExitReportPdf';
+import { generarYSubirFactura } from '../lib/generateFacturaPdf';
 import { buildWhatsAppLinkSalida } from '../lib/whatsapp';
 import type { EstadoOrden, TipoServicio } from '../lib/types';
 
@@ -180,6 +181,56 @@ export default function CheckoutForm({ ordenIdInicial, onEntregado }: CheckoutFo
       );
     } finally {
       setGenerandoInforme(false);
+    }
+
+    // Factura/presupuesto interno final (si el encargado llegó a crear un
+    // Presupuesto para esta orden desde el Panel de gestión) — se genera al
+    // ENTREGAR, no antes, porque es el momento en que las piezas usadas ya
+    // están cerradas. Si no existe presupuesto (el encargado nunca abrió esa
+    // pantalla para esta orden), se omite en silencio: no todas las órdenes
+    // llevan presupuesto formal.
+    try {
+      const { data: presupuestoData } = await supabase
+        .from('presupuestos')
+        .select('id, concepto_mano_obra, precio_mano_obra')
+        .eq('orden_id', orden.id)
+        .maybeSingle();
+      if (presupuestoData) {
+        const presupuesto = presupuestoData as {
+          id: string;
+          concepto_mano_obra: string | null;
+          precio_mano_obra: number;
+        };
+        const { data: piezasData } = await supabase
+          .from('presupuesto_piezas')
+          .select('nombre_item, cantidad, precio_unitario')
+          .eq('presupuesto_id', presupuesto.id);
+        const piezas = (piezasData ?? []).map((p) => {
+          const linea = p as { nombre_item: string; cantidad: number; precio_unitario: number };
+          return { nombre: linea.nombre_item, cantidad: linea.cantidad, precioUnitario: linea.precio_unitario };
+        });
+        const facturaUrl = await generarYSubirFactura({
+          ordenId: orden.id,
+          matricula: orden.vehiculos?.matricula ?? 'sin-matricula',
+          cliente: {
+            nombre: orden.vehiculos?.clientes?.nombre ?? 'Cliente',
+            telefono: orden.vehiculos?.clientes?.telefono,
+          },
+          vehiculo: {
+            matricula: orden.vehiculos?.matricula ?? '—',
+            marca: orden.vehiculos?.marca,
+            modelo: orden.vehiculos?.modelo,
+          },
+          conceptoManoObra: presupuesto.concepto_mano_obra,
+          precioManoObra: presupuesto.precio_mano_obra,
+          piezas,
+        });
+        await supabase.from('presupuestos').update({ factura_pdf_url: facturaUrl }).eq('id', presupuesto.id);
+      }
+    } catch {
+      // No bloquea la entrega — el presupuesto/factura se puede volver a
+      // generar más adelante si hiciera falta; no se avisa aquí para no
+      // duplicar mensajes junto con el informe de salida de arriba.
     }
   };
 

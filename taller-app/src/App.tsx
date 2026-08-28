@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   AlertTriangle,
+  BarChart3,
+  Calendar,
   Car,
   ClipboardCheck,
   History,
@@ -18,6 +20,7 @@ import LoginScreen from './components/LoginScreen';
 import ClientAuthScreen from './components/ClientAuthScreen';
 import ResetPasswordScreen from './components/ResetPasswordScreen';
 import CuentaMenu from './components/CuentaMenu';
+import BuscadorGlobal from './components/BuscadorGlobal';
 import InspectionForm from './pages/InspectionForm';
 import ManagementPanel from './pages/ManagementPanel';
 import CheckoutForm from './pages/CheckoutForm';
@@ -27,6 +30,8 @@ import HistorialVehiculo from './pages/HistorialVehiculo';
 import ProximasRevisiones from './pages/ProximasRevisiones';
 import ClientPortal from './pages/ClientPortal';
 import FlotaRepuestoPanel from './pages/FlotaRepuestoPanel';
+import AgendaPanel from './pages/AgendaPanel';
+import EstadisticasPanel from './pages/EstadisticasPanel';
 import type { OrdenPendienteRecepcion, Perfil } from './lib/types';
 
 type Vista =
@@ -37,7 +42,9 @@ type Vista =
   | 'gestion_personal'
   | 'historial'
   | 'proximas'
-  | 'flota_repuesto';
+  | 'flota_repuesto'
+  | 'agenda'
+  | 'estadisticas';
 type VistaPublica = 'personal' | 'cliente';
 
 function App() {
@@ -53,6 +60,11 @@ function App() {
   // del Portal de cliente — ver ManagementPanel/InspectionForm.
   const [ordenRecepcionPendiente, setOrdenRecepcionPendiente] =
     useState<OrdenPendienteRecepcion | null>(null);
+  // Matrícula prellenada al ir a Historial desde el Buscador global de la
+  // barra de navegación (ver BuscadorGlobal.tsx) — se limpia al cambiar de
+  // pestaña para no re-disparar la búsqueda si se vuelve a Historial luego
+  // a mano.
+  const [matriculaBuscada, setMatriculaBuscada] = useState<string | null>(null);
   // Se activa cuando Supabase Auth dispara 'PASSWORD_RECOVERY' (enlace del
   // email de restablecimiento) — independiente del rol/perfil, se muestra
   // ANTES de intentar cargar el perfil, tanto si el enlace lo pidió la
@@ -142,6 +154,11 @@ function App() {
   const irARecibirVehiculo = (pendiente: OrdenPendienteRecepcion) => {
     setOrdenRecepcionPendiente(pendiente);
     setVista('checkin');
+  };
+
+  const irAHistorialDesdeBusqueda = (matricula: string) => {
+    setMatriculaBuscada(matricula);
+    setVista('historial');
   };
 
   if (cargandoSesion) {
@@ -278,6 +295,22 @@ function App() {
             >
               Próximas revisiones
             </TabButton>
+            <TabButton
+              activo={vista === 'agenda'}
+              onClick={() => setVista('agenda')}
+              icon={<Calendar className="h-4 w-4" />}
+            >
+              Agenda
+            </TabButton>
+            {esEncargado && (
+              <TabButton
+                activo={vista === 'estadisticas'}
+                onClick={() => setVista('estadisticas')}
+                icon={<BarChart3 className="h-4 w-4" />}
+              >
+                Estadísticas
+              </TabButton>
+            )}
             {esEncargado && (
               <TabButton
                 activo={vista === 'inventario'}
@@ -307,7 +340,8 @@ function App() {
             )}
           </div>
 
-          <div className="ml-auto shrink-0 border-l border-white/25 pl-4">
+          <div className="ml-auto flex shrink-0 items-center gap-3 border-l border-white/25 pl-4">
+            <BuscadorGlobal onSeleccionar={irAHistorialDesdeBusqueda} />
             <CuentaMenu
               nombre={perfil.nombre || nombreUsuario(session)}
               email={perfil.email ?? session.user.email ?? ''}
@@ -325,16 +359,22 @@ function App() {
         />
       )}
       {vista === 'panel' && (
-        <ManagementPanel onEntregar={irACheckout} onRecibirDesdeSolicitud={irARecibirVehiculo} />
+        <ManagementPanel
+          onEntregar={irACheckout}
+          onRecibirDesdeSolicitud={irARecibirVehiculo}
+          esEncargado={esEncargado}
+        />
       )}
       {vista === 'checkout' && (
         <CheckoutForm ordenIdInicial={ordenCheckoutId} onEntregado={() => setVista('panel')} />
       )}
-      {vista === 'historial' && <HistorialVehiculo />}
+      {vista === 'historial' && <HistorialVehiculo matriculaInicial={matriculaBuscada} />}
       {vista === 'proximas' && <ProximasRevisiones />}
       {vista === 'inventario' && esEncargado && <InventoryPanel />}
       {vista === 'gestion_personal' && esEncargado && <PersonnelPanel miId={session.user.id} />}
       {vista === 'flota_repuesto' && esEncargado && <FlotaRepuestoPanel />}
+      {vista === 'agenda' && <AgendaPanel />}
+      {vista === 'estadisticas' && esEncargado && <EstadisticasPanel />}
     </div>
   );
 }

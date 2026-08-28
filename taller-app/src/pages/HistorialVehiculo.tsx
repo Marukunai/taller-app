@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Car, ClipboardList, ExternalLink, Gauge, Loader2, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -44,6 +44,13 @@ const SELECT_ORDENES_HISTORIAL =
   'id, estado, tipo_servicio, descripcion_averia, fecha_entrada, fecha_entrega, motivo_cancelacion, ' +
   'pdf_salida_url, inspecciones_entrada(kilometraje, pdf_informe_url)';
 
+interface HistorialVehiculoProps {
+  /** Matrícula a buscar automáticamente al montar — se rellena desde el
+   *  Buscador global de la barra de navegación (ver BuscadorGlobal.tsx),
+   *  para no tener que volver a teclear lo que ya se buscó allí. */
+  matriculaInicial?: string | null;
+}
+
 /**
  * Historial de un vehículo por matrícula — disponible para encargado Y
  * mecánico (a diferencia de Inventario/Gestión de personal): busca el
@@ -52,17 +59,15 @@ const SELECT_ORDENES_HISTORIAL =
  * salida de cada una, para no tener que ir orden por orden en el Panel de
  * gestión cuando un cliente pregunta "¿qué le hicisteis la última vez?".
  */
-export default function HistorialVehiculo() {
-  const [matricula, setMatricula] = useState('');
+export default function HistorialVehiculo({ matriculaInicial }: HistorialVehiculoProps) {
+  const [matricula, setMatricula] = useState(matriculaInicial ?? '');
   const [buscando, setBuscando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [vehiculo, setVehiculo] = useState<VehiculoEncontrado | null>(null);
   const [ordenes, setOrdenes] = useState<OrdenHistorial[]>([]);
   const [buscado, setBuscado] = useState(false);
 
-  const handleBuscar = async (e: FormEvent) => {
-    e.preventDefault();
-    const q = matricula.trim();
+  const buscar = async (q: string) => {
     if (!q) return;
 
     setBuscando(true);
@@ -103,6 +108,18 @@ export default function HistorialVehiculo() {
     }
     setOrdenes((ordenesData ?? []) as unknown as OrdenHistorial[]);
   };
+
+  const handleBuscar = (e: FormEvent) => {
+    e.preventDefault();
+    void buscar(matricula.trim());
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (matriculaInicial) void buscar(matriculaInicial.trim());
+    // Solo al montar (o si cambia la matrícula prellenada desde el
+    // Buscador global) — no en cada tecleo del propio campo de búsqueda.
+  }, [matriculaInicial]);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">

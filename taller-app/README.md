@@ -25,8 +25,9 @@ cuentas de mecánico.
    [`supabase/schema.sql`](./supabase/schema.sql). Crea todas las tablas
    (`clientes`, `vehiculos`, `ordenes_trabajo`, `inspecciones_entrada`,
    `almacenes`, `inventario_items`, `piezas_usadas`, `perfiles`,
-   `solicitudes`, `coches_repuesto`), las políticas de RLS, la publicación
-   de Realtime y unos datos de prueba.
+   `solicitudes`, `coches_repuesto`, `inventario_precios`, `presupuestos`,
+   `presupuesto_piezas`), las políticas de RLS, la publicación de Realtime
+   y unos datos de prueba.
 2. Ve a **Storage** y crea estos 3 buckets, marcados como **Public**:
    - `fotos-vehiculos`
    - `firmas`
@@ -95,6 +96,12 @@ cuentas de mecánico.
 > [`supabase/coches_repuesto_migration.sql`](./supabase/coches_repuesto_migration.sql).
 > Ambas son idempotentes e independientes entre sí — puedes ejecutar una
 > sin la otra.
+>
+> Si tu proyecto ya tiene aplicado todo lo anterior y solo quieres añadir
+> precios de inventario, presupuestos/factura interna y la cita de
+> check-in reservable desde el Portal (secciones 25 y 26), ejecuta
+> [`supabase/presupuestos_agenda_migration.sql`](./supabase/presupuestos_agenda_migration.sql).
+> También idempotente.
 >
 > Si prefieres borrar todos los datos de prueba y empezar de cero en vez
 > de aplicar migraciones una a una, ejecuta primero
@@ -639,12 +646,107 @@ elegir uno, y una vez asignado la tarjeta muestra su matrícula con un
 botón **"Devuelto"** para cerrar el préstamo cuando el cliente lo trae de
 vuelta.
 
-## 25. Próximos pasos sugeridos (fuera de este MVP)
+## 25. Presupuesto / factura interna
 
-- Panel de gestión con calendario (`@fullcalendar/react`) para entradas/salidas.
-- Sugerir automáticamente el precio/coste de las piezas usadas en la
-  factura final (hoy `piezas_usadas` no guarda precio, solo cantidad) —
-  recordando que, si se añade, el mecánico no debe verlo (sección 12).
+Documento de **gestión interna** por orden de trabajo — ⚠️ **no es una
+factura fiscal válida ante Hacienda** (sin numeración correlativa oficial
+ni desglose de IVA), a propósito: es un resumen de mano de obra + piezas
+usadas, pensado para que el taller y el cliente sepan a qué atenerse, no
+para sustituir la contabilidad fiscal real del negocio.
+
+Solo el **encargado** puede crear/editar un presupuesto — botón
+**"Presupuesto"** en cada tarjeta del Panel de gestión (nunca visible para
+un mecánico, ni la propia pantalla ni ningún precio en ella). Desde el
+modal:
+
+- Se indica un **concepto y precio de mano de obra** libres.
+- **"Recalcular desde piezas usadas"** vuelca el detalle de
+  `piezas_usadas` de esa orden con el precio guardado en
+  **Inventario** (ver más abajo) — es un cálculo bajo demanda, no algo que
+  se mantenga sincronizado solo: hay que pulsarlo de nuevo si se añaden o
+  quitan piezas después.
+- Si la orden viene de una **solicitud del Portal de cliente**, se puede
+  **"Enviar al cliente"**: el cliente lo ve en su Portal y puede
+  **aprobarlo o rechazarlo** (con una nota opcional) desde su propia
+  cuenta.
+- Si la orden es de un check-in directo (sin solicitud de por medio, así
+  que el cliente no tiene cuenta), el encargado marca **aprobado/rechazado
+  a mano** tras acordarlo por teléfono o WhatsApp.
+
+Al **entregar el vehículo** (Entrega), si la orden tiene un presupuesto,
+se genera automáticamente un PDF de factura final (mano de obra + piezas +
+total) y se sube junto al resto de documentos — sin bloquear la entrega si
+falla. El PDF queda enlazado también en el Portal del cliente, junto al
+presupuesto.
+
+Los precios de los items de Inventario se guardan en una pantalla nueva
+dentro de **Inventario** (icono de € bajo cada item, solo visible porque
+esa pestaña ya es exclusiva del encargado) — es una tabla `inventario_
+precios` **totalmente aparte** de `inventario_items` y de `piezas_usadas`,
+para que un mecánico nunca pueda ver ningún coste ni inspeccionando las
+peticiones de red (ver sección 12).
+
+## 26. Agenda (citas de recogida y de check-in)
+
+Pestaña **"Agenda"**, visible para cualquier personal, con una lista
+cronológica (agrupada por día) de:
+
+- Las citas de **recogida** ya concertadas por el taller al marcar una
+  orden como "Listo" (lo que antes solo se veía en la propia tarjeta del
+  Panel de gestión).
+- Las citas de **check-in** que el cliente propone al pedir un servicio
+  desde el Portal — un nuevo campo opcional de fecha/hora en el formulario
+  de solicitud (`solicitudes.fecha_cita_checkin`), con la misma sencillez
+  que la cita de recogida: una propuesta, sin gestión de franjas horarias
+  ni de aforo. El personal la ve también en **Solicitudes de clientes**, y
+  puede confirmarla o proponer otra por teléfono si no encaja.
+
+No sustituye ningún calendario externo — es una vista de solo lectura
+pensada para ver de un vistazo qué se espera cada día.
+
+## 27. Panel de estadísticas
+
+Pestaña **"Estadísticas"**, solo para el encargado (incluye datos de
+ingresos). Cuatro indicadores, calculados en el cliente a partir de las
+tablas existentes (sin ninguna vista SQL nueva):
+
+- **Tiempo medio de reparación**: entre `fecha_entrada` y `fecha_entrega`
+  de las órdenes ya entregadas.
+- **Piezas más solicitadas**: agregado de `piezas_usadas` por nombre.
+- **Ingresos**: suma de presupuestos en estado **aprobado** (mano de obra
+  + piezas), con desglose por mes.
+- **Volumen de órdenes**: por estado, y por mes.
+
+Los gráficos son barras simples con CSS (sin ninguna librería de
+gráficos nueva, para no depender de una instalación npm extra).
+
+## 28. Buscador global
+
+Campo de búsqueda en la barra de navegación (visible para cualquier
+personal) que busca a la vez por **matrícula**, **nombre de cliente** o
+**DNI**, y lleva directamente al **Historial de vehículo** del resultado
+elegido, ya con la búsqueda hecha — para no tener que ir primero a
+Historial y teclear la matrícula a mano.
+
+## 29. Aplicación instalable (PWA)
+
+TallerGo se puede **instalar** como aplicación (icono en el escritorio o
+en la pantalla de inicio del móvil, sin barra de navegador) gracias a un
+`manifest.json` y un Service Worker mínimos (hechos a mano, sin depender
+de ninguna librería nueva). El Service Worker **no cachea agresivamente a
+propósito**: esta app vive de datos siempre frescos de Supabase (stock,
+órdenes, solicitudes en tiempo real...), así que solo sirve del caché como
+último recurso si la red falla (por ejemplo, sin conexión) — nunca
+antepone una versión guardada a una petición que sí puede completarse.
+
+## 30. Próximos pasos sugeridos (fuera de este MVP)
+
+- Panel de gestión con calendario visual completo (`@fullcalendar/react`)
+  en vez de la lista cronológica sencilla de la Agenda (sección 26).
+- Numeración fiscal real y desglose de IVA, si en algún momento hiciera
+  falta emitir facturas válidas ante Hacienda (hoy el Presupuesto/factura
+  interna, sección 25, es deliberadamente un documento de gestión, no
+  fiscal).
 - Historial de kilometraje real por vehículo (por ejemplo, pidiéndolo en
   cada visita) para que "Próximas revisiones" deje de depender de una
   estimación.

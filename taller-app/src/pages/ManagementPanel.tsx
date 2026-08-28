@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Car,
   ClipboardList,
+  Euro,
   ImageOff,
   Loader2,
   Phone,
@@ -18,7 +19,8 @@ import CitaRecogidaModal from '../components/CitaRecogidaModal';
 import CancelarOrdenModal from '../components/CancelarOrdenModal';
 import SolicitudesPanel from '../components/SolicitudesPanel';
 import AsignarRepuestoModal from '../components/AsignarRepuestoModal';
-import type { EstadoOrden, OrdenPendienteRecepcion, TipoServicio } from '../lib/types';
+import PresupuestoModal from '../components/PresupuestoModal';
+import type { EstadoOrden, EstadoPresupuesto, OrdenPendienteRecepcion, TipoServicio } from '../lib/types';
 
 /** Estados en los que el vehículo ya está físicamente en el taller — solo
  *  en estos tiene sentido ofrecer/gestionar un coche de sustitución. */
@@ -47,6 +49,13 @@ const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
   mantenimiento: 'Mantenimiento',
   neumaticos: 'Neumáticos',
   averia: 'Avería',
+};
+
+const ETIQUETA_PRESUPUESTO_CORTA: Record<EstadoPresupuesto, string> = {
+  borrador: 'borrador',
+  enviado: 'enviado',
+  aprobado: 'aprobado',
+  rechazado: 'rechazado',
 };
 
 interface OrdenPanel {
@@ -81,6 +90,7 @@ interface OrdenPanel {
   coche_repuesto_id: string | null;
   fecha_devolucion_repuesto: string | null;
   coches_repuesto: { matricula: string; marca: string | null; modelo: string | null } | null;
+  solicitud_id: string | null;
 }
 
 interface ManagementPanelProps {
@@ -93,6 +103,10 @@ interface ManagementPanelProps {
    *  ya dio el cliente, en vez de un simple botón de avanzar estado (que
    *  saltaría el check-in real: DNI, fotos, daños y firma). */
   onRecibirDesdeSolicitud?: (pendiente: OrdenPendienteRecepcion) => void;
+  /** Solo el encargado ve el botón de Presupuesto/factura interna (nunca un
+   *  mecánico, ver PresupuestoModal.tsx) — si no se pasa (o es false), ni
+   *  siquiera se hace la consulta ligera de presupuestos por orden. */
+  esEncargado?: boolean;
 }
 
 /** Primera foto subida en la inspección de entrada de una orden, si hay
@@ -108,7 +122,7 @@ const SELECT_ORDENES =
   'vehiculos(matricula, marca, modelo, color, clientes(nombre, telefono, email)), ' +
   'inspecciones_entrada(fotos_urls), piezas_usadas(id), ' +
   'solicitudes(nombre_cliente, telefono_cliente, email_cliente, matricula, marca, modelo), ' +
-  'coche_repuesto_id, fecha_devolucion_repuesto, coches_repuesto(matricula, marca, modelo)';
+  'coche_repuesto_id, fecha_devolucion_repuesto, coches_repuesto(matricula, marca, modelo), solicitud_id';
 
 /**
  * Tablero de órdenes de trabajo agrupadas por estado, con un botón por
@@ -116,7 +130,7 @@ const SELECT_ORDENES =
  * también, en una pestaña aparte, las solicitudes que los clientes crean
  * ellos mismos desde el Portal de cliente.
  */
-export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud }: ManagementPanelProps) {
+export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, esEncargado }: ManagementPanelProps) {
   const [pestana, setPestana] = useState<'ordenes' | 'solicitudes'>('ordenes');
   const [ordenes, setOrdenes] = useState<OrdenPanel[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -127,6 +141,16 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud }:
   const [cancelarModal, setCancelarModal] = useState<OrdenPanel | null>(null);
   const [repuestoModal, setRepuestoModal] = useState<OrdenPanel | null>(null);
   const [devolviendoId, setDevolviendoId] = useState<string | null>(null);
+  const [presupuestoModal, setPresupuestoModal] = useState<OrdenPanel | null>(null);
+  // Consulta APARTE y ligera (no embebida en SELECT_ORDENES) por dos
+  // motivos: 1) `presupuestos.orden_id` es `unique`, y PostgREST puede
+  // ambigüar la dirección del embed 1:1 vs 1:muchos; 2) esta pantalla la
+  // usa también un mecánico (sin esEncargado), que por RLS nunca podría
+  // leer `presupuestos` — mejor no intentarlo en absoluto que fallar en
+  // silencio en cada fila.
+  const [presupuestosPorOrden, setPresupuestosPorOrden] = useState<
+    Record<string, { estado: EstadoPresupuesto }>
+  >({});
 
   const cargarOrdenes = useCallback(async () => {
     setCargando(true);
@@ -150,6 +174,23 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud }:
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarOrdenes();
   }, [cargarOrdenes]);
+
+  const cargarPresupuestos = useCallback(async () => {
+    if (!esEncargado) return;
+    const { data, error: fetchError } = await supabase.from('presupuestos').select('orden_id, estado');
+    if (fetchError) return; // sin ruido: la migración puede no estar aplicada todavía
+    const mapa: Record<string, { estado: EstadoPresupuesto }> = {};
+    for (const fila of data ?? []) {
+      const f = fila as { orden_id: string; estado: EstadoPresupuesto };
+      mapa[f.orden_id] = { estado: f.estado };
+    }
+    setPresupuestosPorOrden(mapa);
+  }, [esEncargado]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarPresupuestos();
+  }, [cargarPresupuestos]);
 
   const avanzarEstado = async (orden: OrdenPanel) => {
     const siguiente = SIGUIENTE_ESTADO[orden.estado];
@@ -398,6 +439,20 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud }:
                               </button>
                             )}
 
+                            {esEncargado && orden.estado !== 'solicitado' && orden.estado !== 'cancelado' && (
+                              <button
+                                type="button"
+                                onClick={() => setPresupuestoModal(orden)}
+                                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                              >
+                                <Euro className="h-3.5 w-3.5" />
+                                Presupuesto
+                                {presupuestosPorOrden[orden.id]
+                                  ? ` (${ETIQUETA_PRESUPUESTO_CORTA[presupuestosPorOrden[orden.id].estado]})`
+                                  : ''}
+                              </button>
+                            )}
+
                             {ESTADOS_CON_VEHICULO_EN_TALLER.includes(orden.estado) &&
                               (tieneRepuestoActivo ? (
                                 <div className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-700">
@@ -550,6 +605,21 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud }:
           cargarOrdenes();
         }}
       />
+
+      {presupuestoModal && (
+        <PresupuestoModal
+          open
+          ordenId={presupuestoModal.id}
+          solicitudId={presupuestoModal.solicitud_id}
+          matricula={
+            presupuestoModal.vehiculos?.matricula ?? presupuestoModal.solicitudes?.matricula ?? '—'
+          }
+          onClose={() => {
+            setPresupuestoModal(null);
+            cargarPresupuestos();
+          }}
+        />
+      )}
     </div>
   );
 }

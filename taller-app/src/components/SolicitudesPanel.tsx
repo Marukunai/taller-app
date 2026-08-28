@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Car, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, XCircle } from 'lucide-react';
+import { Car, CalendarClock, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, XCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { EstadoSolicitud, NeumaticosCantidad, Solicitud, TipoServicio } from '../lib/types';
 
@@ -52,7 +52,8 @@ export default function SolicitudesPanel() {
       .from('solicitudes')
       .select(
         'id, created_at, cliente_auth_id, nombre_cliente, email_cliente, telefono_cliente, ' +
-          'matricula, marca, modelo, tipo_servicio, descripcion, neumaticos_cantidad, estado, respuesta_taller',
+          'matricula, marca, modelo, tipo_servicio, descripcion, neumaticos_cantidad, estado, respuesta_taller, ' +
+          'fecha_cita_checkin',
       )
       .order('created_at', { ascending: false });
     if (fetchError) setError(fetchError.message);
@@ -254,6 +255,13 @@ function TarjetaCabecera({ s }: { s: Solicitud }) {
         <p className="flex items-center gap-1.5 text-xs text-gray-600">
           <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
           {s.matricula} · {[s.marca, s.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo'}
+        </p>
+      )}
+      {s.fecha_cita_checkin && (
+        <p className="flex items-center gap-1.5 text-xs text-indigo-600">
+          <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+          Propone traerlo el {new Date(s.fecha_cita_checkin).toLocaleDateString('es-ES')} a las{' '}
+          {new Date(s.fecha_cita_checkin).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
         </p>
       )}
       <p className="text-xs font-medium text-blue-600">

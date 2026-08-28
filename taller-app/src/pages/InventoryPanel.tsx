@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ImagePlus, Loader2, Minus, Package, Pencil, Plus, Search, Trash2, Warehouse, X } from 'lucide-react';
+import { Euro, ImagePlus, Loader2, Minus, Package, Pencil, Plus, Search, Trash2, Warehouse, X } from 'lucide-react';
 import { supabase, BUCKETS } from '../lib/supabase';
 import type { Almacen, InventarioItem } from '../lib/types';
 
@@ -81,6 +81,59 @@ export default function InventoryPanel() {
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   const [confirmandoBorradoId, setConfirmandoBorradoId] = useState<string | null>(null);
   const [borrandoId, setBorrandoId] = useState<string | null>(null);
+
+  // Precios de inventario — pantalla solo accesible al encargado (ver
+  // App.tsx: la pestaña "Inventario" ni siquiera se muestra a un
+  // mecánico), así que aquí no hace falta ningún gating adicional; la RLS
+  // de `inventario_precios` (solo encargado) es la barrera real. Se
+  // guarda aparte de `items` porque vive en su propia tabla — ver
+  // supabase/schema.sql.
+  const [precios, setPrecios] = useState<Record<string, number>>({});
+  const [editandoPrecioId, setEditandoPrecioId] = useState<string | null>(null);
+  const [precioForm, setPrecioForm] = useState('');
+  const [guardandoPrecio, setGuardandoPrecio] = useState(false);
+
+  const cargarPrecios = useCallback(async () => {
+    const { data, error: fetchError } = await supabase
+      .from('inventario_precios')
+      .select('item_id, precio_unitario');
+    if (fetchError) return; // sin ruido: si aún no se ejecutó la migración, simplemente no se ven precios
+    const mapa: Record<string, number> = {};
+    for (const fila of data ?? []) {
+      mapa[(fila as { item_id: string }).item_id] = Number((fila as { precio_unitario: number }).precio_unitario);
+    }
+    setPrecios(mapa);
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarPrecios();
+  }, [cargarPrecios]);
+
+  const abrirEdicionPrecio = (item: InventarioItem) => {
+    setEditandoPrecioId(item.id);
+    setPrecioForm(precios[item.id] != null ? String(precios[item.id]) : '');
+  };
+
+  const guardarPrecio = async (itemId: string) => {
+    const valor = Number(precioForm.replace(',', '.'));
+    if (Number.isNaN(valor) || valor < 0) {
+      setError('El precio debe ser un número válido.');
+      return;
+    }
+    setGuardandoPrecio(true);
+    setError(null);
+    const { error: upsertError } = await supabase
+      .from('inventario_precios')
+      .upsert({ item_id: itemId, precio_unitario: valor });
+    setGuardandoPrecio(false);
+    if (upsertError) {
+      setError(`No se pudo guardar el precio: ${upsertError.message}`);
+      return;
+    }
+    setPrecios((prev) => ({ ...prev, [itemId]: valor }));
+    setEditandoPrecioId(null);
+  };
 
   const cargarAlmacenes = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -745,6 +798,47 @@ export default function InventoryPanel() {
                             {item.nombre}
                           </p>
                           {item.tamano && <p className="text-sm text-gray-500">{item.tamano}</p>}
+                          {editandoPrecioId === item.id ? (
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <input
+                                autoFocus
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={precioForm}
+                                onChange={(e) => setPrecioForm(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && guardarPrecio(item.id)}
+                                className="w-20 rounded-lg border border-gray-300 px-2 py-1 text-xs"
+                                placeholder="0.00"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => guardarPrecio(item.id)}
+                                disabled={guardandoPrecio}
+                                className="rounded-full bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-60"
+                              >
+                                Guardar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditandoPrecioId(null)}
+                                className="rounded-full p-1 text-gray-400 hover:bg-gray-100"
+                                aria-label="Cancelar"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => abrirEdicionPrecio(item)}
+                              className="mt-1 flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-emerald-600"
+                              title="Editar precio unitario"
+                            >
+                              <Euro className="h-3 w-3" />
+                              {precios[item.id] != null ? `${precios[item.id].toFixed(2)} €/ud` : 'Añadir precio'}
+                            </button>
+                          )}
                           {item.cantidad === 0 ? (
                             <span className="mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">
                               Agotado
