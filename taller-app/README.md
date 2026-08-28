@@ -553,7 +553,36 @@ previa con una herramienta como el
 (WhatsApp reutiliza el mismo sistema de rastreo de Open Graph), ya que
 WhatsApp cachea la primera vista previa que ve de una URL.
 
-## 23. Próximos pasos sugeridos (fuera de este MVP)
+## 23. Limpiar datos de prueba antes de producción
+
+Una vez desplegada la app y probada, antes de empezar a usarla de verdad
+conviene limpiar los datos que hayas ido creando mientras probabas.
+Ejecuta [`supabase/limpiar_datos_prueba.sql`](./supabase/limpiar_datos_prueba.sql)
+en el **SQL Editor** de Supabase:
+
+- Borra todos los clientes, vehículos, órdenes de trabajo, inspecciones,
+  piezas usadas registradas y solicitudes del Portal de cliente
+  (incluido el cliente de ejemplo "Juan Pérez" si sigue ahí).
+- Vuelve a dejar el inventario en su catálogo inicial de 55 items "de
+  fábrica", todos en "Almacén 1" — si has creado más de un almacén o
+  items propios que no estaban en el catálogo original, se pierden con
+  este paso.
+- **No toca** las cuentas de personal/encargado ni las cuentas de cliente
+  ya registradas en Supabase Auth (solo se borran sus solicitudes, no la
+  cuenta en sí).
+
+A diferencia de [`reset_database.sql`](./supabase/reset_database.sql) (que
+borra y recrea las tablas desde cero, y siempre vuelve a insertar el
+cliente de ejemplo), este script solo borra filas — no hace falta
+ejecutar nada más después.
+
+**Fotos, firmas y PDFs de prueba ya subidos**: borrar filas de la base de
+datos no borra los archivos ya subidos a Storage. Para vaciarlos también,
+ve al panel **Storage** de tu proyecto Supabase, entra en cada uno de los
+3 buckets (`fotos-vehiculos`, `firmas`, `documentos-pdf`), selecciona
+todos los archivos y bórralos desde ahí.
+
+## 24. Próximos pasos sugeridos (fuera de este MVP)
 
 - Panel de gestión con calendario (`@fullcalendar/react`) para entradas/salidas.
 - Que aceptar una solicitud del Portal de cliente pueda crear directamente
