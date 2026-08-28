@@ -778,8 +778,16 @@ export default function InventoryPanel() {
                     ) : (
                       <div
                         key={item.id}
-                        className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+                        // En móvil se apila en dos filas (foto+nombre arriba,
+                        // controles de cantidad/edición abajo, alineados a la
+                        // derecha) en vez de forzar todo en una sola fila: con
+                        // 10 pestañas y controles a la derecha no queda ancho
+                        // suficiente para el nombre y el texto se partía
+                        // letra por letra. A partir de `sm` vuelve a ser una
+                        // sola fila horizontal como antes.
+                        className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:gap-4"
                       >
+                        <div className="flex min-w-0 flex-1 items-center gap-4">
                         {item.imagen_url ? (
                           <img
                             src={item.imagen_url}
@@ -851,8 +859,9 @@ export default function InventoryPanel() {
                             )
                           )}
                         </div>
+                        </div>
                         {confirmandoBorradoId === item.id ? (
-                          <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
+                          <div className="flex shrink-0 flex-col items-end gap-1 self-end sm:flex-row sm:items-center sm:self-auto">
                             <span className="text-xs text-gray-500">¿Borrar item?</span>
                             <div className="flex items-center gap-1.5">
                               <button
@@ -873,7 +882,7 @@ export default function InventoryPanel() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex shrink-0 items-center gap-2">
+                          <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
                             <button
                               type="button"
                               onClick={() => ajustarCantidad(item, -1)}

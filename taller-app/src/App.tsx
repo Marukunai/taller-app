@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -9,11 +9,13 @@ import {
   ClipboardCheck,
   History,
   KanbanSquare,
+  Menu,
   Package,
   ShieldAlert,
   Truck,
   Users,
   Wrench,
+  X as CerrarMenuIcon,
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import LoginScreen from './components/LoginScreen';
@@ -65,6 +67,13 @@ function App() {
   // pestaña para no re-disparar la búsqueda si se vuelve a Historial luego
   // a mano.
   const [matriculaBuscada, setMatriculaBuscada] = useState<string | null>(null);
+  // Menú de pestañas en móvil: con 10 pestañas posibles no caben en una
+  // barra horizontal sin ocupar media pantalla envueltas en varias líneas
+  // (lo que se veía "raro" en el móvil) — a partir de `md` se muestran en
+  // línea como siempre; por debajo de `md` se ocultan detrás de este
+  // desplegable tipo hamburguesa.
+  const [menuMovilAbierto, setMenuMovilAbierto] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
   // Se activa cuando Supabase Auth dispara 'PASSWORD_RECOVERY' (enlace del
   // email de restablecimiento) — independiente del rol/perfil, se muestra
   // ANTES de intentar cargar el perfil, tanto si el enlace lo pidió la
@@ -145,6 +154,17 @@ function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!menuMovilAbierto) return;
+    const handleClick = (e: MouseEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setMenuMovilAbierto(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [menuMovilAbierto]);
 
   const irACheckout = (ordenId: string) => {
     setOrdenCheckoutId(ordenId);
@@ -233,111 +253,105 @@ function App() {
   // AskUserQuestion de la batch de roles finos.
   const esEncargado = perfil.rol === 'encargado';
 
+  // Lista de pestañas en un solo sitio, en vez de repetir cada TabButton
+  // en dos partes del JSX: se recorre dos veces al pintar (fila horizontal
+  // a partir de `md`, desplegable apilado por debajo de eso).
+  const tabs: { key: Vista; label: string; icon: ReactNode; onClick: () => void }[] = [
+    {
+      key: 'checkin',
+      label: 'Check-in',
+      icon: <ClipboardCheck className="h-4 w-4" />,
+      onClick: () => {
+        setOrdenRecepcionPendiente(null);
+        setVista('checkin');
+      },
+    },
+    {
+      key: 'panel',
+      label: 'Panel de gestión',
+      icon: <KanbanSquare className="h-4 w-4" />,
+      onClick: () => setVista('panel'),
+    },
+    {
+      key: 'checkout',
+      label: 'Entrega',
+      icon: <Truck className="h-4 w-4" />,
+      onClick: () => {
+        setOrdenCheckoutId(null);
+        setVista('checkout');
+      },
+    },
+    {
+      key: 'historial',
+      label: 'Historial',
+      icon: <History className="h-4 w-4" />,
+      onClick: () => setVista('historial'),
+    },
+    {
+      key: 'proximas',
+      label: 'Próximas revisiones',
+      icon: <AlertTriangle className="h-4 w-4" />,
+      onClick: () => setVista('proximas'),
+    },
+    {
+      key: 'agenda',
+      label: 'Agenda',
+      icon: <Calendar className="h-4 w-4" />,
+      onClick: () => setVista('agenda'),
+    },
+    ...(esEncargado
+      ? [
+          {
+            key: 'estadisticas' as Vista,
+            label: 'Estadísticas',
+            icon: <BarChart3 className="h-4 w-4" />,
+            onClick: () => setVista('estadisticas'),
+          },
+          {
+            key: 'inventario' as Vista,
+            label: 'Inventario',
+            icon: <Package className="h-4 w-4" />,
+            onClick: () => setVista('inventario'),
+          },
+          {
+            key: 'gestion_personal' as Vista,
+            label: 'Personal',
+            icon: <Users className="h-4 w-4" />,
+            onClick: () => setVista('gestion_personal'),
+          },
+          {
+            key: 'flota_repuesto' as Vista,
+            label: 'Flota',
+            icon: <Car className="h-4 w-4" />,
+            onClick: () => setVista('flota_repuesto'),
+          },
+        ]
+      : []),
+  ];
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-blue-50">
-      <nav className="bg-gradient-to-r from-indigo-600 to-blue-600 px-4 py-3 shadow-md">
-        {/* Dos grupos separados a los extremos de TODO el ancho de la barra
-         *  (sin el `max-w-6xl` de antes, que centraba el contenido y dejaba
-         *  la cuenta/cerrar sesión pegada a los tabs en pantallas anchas):
-         *  a la izquierda el logo + los tabs (que sí pueden envolver en
-         *  varias líneas en pantallas estrechas), a la derecha, separados
-         *  por un divisor vertical, el nombre de la cuenta y "Cerrar
-         *  sesión" — así quedan claramente diferenciados del resto de la
-         *  navegación en vez de aparecer justo a continuación del último
-         *  tab. */}
-        <div className="flex w-full flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="mr-2 flex items-center gap-2 pr-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white">
-                <Wrench className="h-4 w-4" />
-              </span>
-              <span className="hidden font-bold text-white sm:inline">TallerGo</span>
-            </div>
+      <nav ref={navRef} className="bg-gradient-to-r from-indigo-600 to-blue-600 px-4 py-3 shadow-md">
+        {/* Con hasta 10 pestañas posibles (encargado), mostrarlas todas en
+         *  línea en un móvil las envolvía en 3-4 filas y dejaba la barra
+         *  ocupando media pantalla — de ahí el "raro" en la vista móvil. A
+         *  partir de `md` se muestran en línea como siempre; por debajo de
+         *  eso quedan ocultas detrás del botón de hamburguesa y aparecen
+         *  como un desplegable apilado. */}
+        <div className="flex w-full items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white">
+              <Wrench className="h-4 w-4" />
+            </span>
+            <span className="hidden font-bold text-white sm:inline">TallerGo</span>
+          </div>
 
-            <TabButton
-              activo={vista === 'checkin'}
-              onClick={() => {
-                setOrdenRecepcionPendiente(null);
-                setVista('checkin');
-              }}
-              icon={<ClipboardCheck className="h-4 w-4" />}
-            >
-              Check-in
-            </TabButton>
-            <TabButton
-              activo={vista === 'panel'}
-              onClick={() => setVista('panel')}
-              icon={<KanbanSquare className="h-4 w-4" />}
-            >
-              Panel de gestión
-            </TabButton>
-            <TabButton
-              activo={vista === 'checkout'}
-              onClick={() => {
-                setOrdenCheckoutId(null);
-                setVista('checkout');
-              }}
-              icon={<Truck className="h-4 w-4" />}
-            >
-              Entrega
-            </TabButton>
-            <TabButton
-              activo={vista === 'historial'}
-              onClick={() => setVista('historial')}
-              icon={<History className="h-4 w-4" />}
-            >
-              Historial
-            </TabButton>
-            <TabButton
-              activo={vista === 'proximas'}
-              onClick={() => setVista('proximas')}
-              icon={<AlertTriangle className="h-4 w-4" />}
-            >
-              Próximas revisiones
-            </TabButton>
-            <TabButton
-              activo={vista === 'agenda'}
-              onClick={() => setVista('agenda')}
-              icon={<Calendar className="h-4 w-4" />}
-            >
-              Agenda
-            </TabButton>
-            {esEncargado && (
-              <TabButton
-                activo={vista === 'estadisticas'}
-                onClick={() => setVista('estadisticas')}
-                icon={<BarChart3 className="h-4 w-4" />}
-              >
-                Estadísticas
+          <div className="hidden flex-1 flex-wrap items-center gap-2 md:flex">
+            {tabs.map((tab) => (
+              <TabButton key={tab.key} activo={vista === tab.key} onClick={tab.onClick} icon={tab.icon}>
+                {tab.label}
               </TabButton>
-            )}
-            {esEncargado && (
-              <TabButton
-                activo={vista === 'inventario'}
-                onClick={() => setVista('inventario')}
-                icon={<Package className="h-4 w-4" />}
-              >
-                Inventario
-              </TabButton>
-            )}
-            {esEncargado && (
-              <TabButton
-                activo={vista === 'gestion_personal'}
-                onClick={() => setVista('gestion_personal')}
-                icon={<Users className="h-4 w-4" />}
-              >
-                Personal
-              </TabButton>
-            )}
-            {esEncargado && (
-              <TabButton
-                activo={vista === 'flota_repuesto'}
-                onClick={() => setVista('flota_repuesto')}
-                icon={<Car className="h-4 w-4" />}
-              >
-                Flota
-              </TabButton>
-            )}
+            ))}
           </div>
 
           <div className="ml-auto flex shrink-0 items-center gap-3 border-l border-white/25 pl-4">
@@ -348,8 +362,36 @@ function App() {
               rol={perfil.rol}
               onCerrarSesion={() => supabase.auth.signOut()}
             />
+            <button
+              type="button"
+              onClick={() => setMenuMovilAbierto((v) => !v)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white hover:bg-white/10 md:hidden"
+              aria-label={menuMovilAbierto ? 'Cerrar menú' : 'Abrir menú'}
+              aria-expanded={menuMovilAbierto}
+            >
+              {menuMovilAbierto ? <CerrarMenuIcon className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
           </div>
         </div>
+
+        {menuMovilAbierto && (
+          <div className="mt-3 flex flex-col gap-1 border-t border-white/20 pt-3 md:hidden">
+            {tabs.map((tab) => (
+              <TabButton
+                key={tab.key}
+                activo={vista === tab.key}
+                onClick={() => {
+                  tab.onClick();
+                  setMenuMovilAbierto(false);
+                }}
+                icon={tab.icon}
+                className="w-full justify-start"
+              >
+                {tab.label}
+              </TabButton>
+            ))}
+          </div>
+        )}
       </nav>
 
       {vista === 'checkin' && (
@@ -393,16 +435,20 @@ interface TabButtonProps {
   onClick: () => void;
   icon: ReactNode;
   children: ReactNode;
+  /** Clases extra — usada por el desplegable móvil para que cada pestaña
+   *  ocupe todo el ancho y quede alineada a la izquierda en vez de con el
+   *  tamaño ajustado al texto, como en la fila horizontal de escritorio. */
+  className?: string;
 }
 
-function TabButton({ activo, onClick, icon, children }: TabButtonProps) {
+function TabButton({ activo, onClick, icon, children, className = '' }: TabButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
         activo ? 'bg-white text-indigo-700 shadow-sm' : 'text-white/80 hover:bg-white/10 hover:text-white'
-      }`}
+      } ${className}`}
     >
       {icon}
       {children}
