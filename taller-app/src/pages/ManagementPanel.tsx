@@ -43,6 +43,14 @@ const SIGUIENTE_ESTADO: Partial<Record<EstadoOrden, EstadoOrden>> = {
  *  entregada o ya cancelada, no aplica). */
 const CANCELABLE: EstadoOrden[] = ['solicitado', 'recepcionado', 'en_proceso', 'listo'];
 
+/** La columna "Entregado" deja de mostrar un vehículo pasados 3 días desde
+ *  su entrega — no se borra nada: la orden sigue intacta en la base de
+ *  datos (fotos, firma, PDF y precio incluidos) y se sigue pudiendo
+ *  consultar en el Historial de vehículo por matrícula (ver
+ *  HistorialVehiculo.tsx). Es solo para que el tablero de "Panel de
+ *  gestión" no se llene de coches ya entregados hace semanas. */
+const OCULTAR_ENTREGADOS_TRAS_MS = 3 * 24 * 60 * 60 * 1000;
+
 const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
   mantenimiento: 'Mantenimiento',
   neumaticos: 'Neumáticos',
@@ -62,6 +70,7 @@ interface OrdenPanel {
   tipo_servicio: TipoServicio;
   descripcion_averia: string | null;
   fecha_entrada: string | null;
+  fecha_entrega: string | null;
   cita_recogida: string | null;
   motivo_cancelacion: string | null;
   vehiculos: {
@@ -116,7 +125,7 @@ function primeraFoto(orden: OrdenPanel): string | null {
 }
 
 const SELECT_ORDENES =
-  'id, estado, tipo_servicio, descripcion_averia, fecha_entrada, cita_recogida, motivo_cancelacion, ' +
+  'id, estado, tipo_servicio, descripcion_averia, fecha_entrada, fecha_entrega, cita_recogida, motivo_cancelacion, ' +
   'vehiculos(matricula, marca, modelo, color, clientes(nombre, telefono, email)), ' +
   'inspecciones_entrada(fotos_urls), piezas_usadas(id), ' +
   'solicitudes(nombre_cliente, telefono_cliente, email_cliente, matricula, marca, modelo), ' +
@@ -284,7 +293,18 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
               {ESTADOS.map((columna) => {
-                const ordenesColumna = ordenes.filter((o) => o.estado === columna.value);
+                const ordenesEstado = ordenes.filter((o) => o.estado === columna.value);
+                // "Entregado" oculta (que no borra) los coches entregados
+                // hace más de 3 días — ver OCULTAR_ENTREGADOS_TRAS_MS.
+                const ordenesColumna =
+                  columna.value === 'entregado'
+                    ? ordenesEstado.filter(
+                        (o) =>
+                          !o.fecha_entrega ||
+                          Date.now() - new Date(o.fecha_entrega).getTime() < OCULTAR_ENTREGADOS_TRAS_MS,
+                      )
+                    : ordenesEstado;
+                const antiguosOcultos = ordenesEstado.length - ordenesColumna.length;
                 return (
                   <div key={columna.value} className={`rounded-2xl ${columna.fondo} p-3`}>
                     <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
@@ -498,6 +518,12 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                           </div>
                         );
                       })}
+                      {antiguosOcultos > 0 && (
+                        <p className="text-xs text-gray-400">
+                          +{antiguosOcultos} entregado{antiguosOcultos === 1 ? '' : 's'} hace más de 3
+                          días — consulta el Historial de vehículo.
+                        </p>
+                      )}
                     </div>
                   </div>
                 );

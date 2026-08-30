@@ -301,6 +301,20 @@ pastilla con su color (si se indicó al hacer el check-in). En la pantalla
 de Entrega, además, si hay más de un vehículo listo se muestra un aviso
 recordando fijarse en la foto, el color y la matrícula antes de confirmar.
 
+### 9.1 Ocultar entregados antiguos del tablero
+
+La columna "Entregado" del Panel de gestión deja de mostrar un vehículo
+pasados **3 días desde su entrega** (campo `fecha_entrega`, que ya se
+guardaba al confirmar la entrega — ver sección 11). No se borra nada: la
+orden, sus fotos, la firma y el PDF de salida siguen intactos en la base
+de datos y se pueden consultar en cualquier momento desde el **Historial
+de vehículo** (sección 17) buscando la matrícula. Si hay vehículos
+ocultados por esta regla, la columna muestra un aviso discreto
+("+N entregados hace más de 3 días — consulta el Historial de vehículo")
+para que quede claro que no han desaparecido de verdad. El umbral de 3
+días está en la constante `OCULTAR_ENTREGADOS_TRAS_MS` de
+`ManagementPanel.tsx` si en algún momento se quiere cambiar.
+
 ## 10. Cancelar una orden de trabajo
 
 Si un cliente cambia de idea o cancela un pedido, cada tarjeta del Panel de
@@ -798,8 +812,3 @@ Supabase Realtime.
 - Historial de kilometraje real por vehículo (por ejemplo, pidiéndolo en
   cada visita) para que "Próximas revisiones" deje de depender de una
   estimación.
-- Borrado/archivado automático de órdenes ya entregadas transcurrido un
-  tiempo — pendiente de decidir el alcance exacto (¿borrar el registro
-  entero, con el riesgo de perder ese historial del vehículo, o solo
-  archivarlo/ocultarlo del tablero activo sin borrar nada?) antes de
-  implementarlo.
