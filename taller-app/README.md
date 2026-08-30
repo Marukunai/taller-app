@@ -103,6 +103,12 @@ cuentas de mecánico.
 > [`supabase/presupuestos_agenda_migration.sql`](./supabase/presupuestos_agenda_migration.sql).
 > También idempotente.
 >
+> Si tu proyecto ya tiene aplicado todo lo anterior y solo quieres añadir
+> cantidades decimales en inventario/piezas usadas y la pestaña "Solicitud
+> de cita" (secciones 8 y 31), ejecuta
+> [`supabase/checkin_split_y_decimales_migration.sql`](./supabase/checkin_split_y_decimales_migration.sql).
+> También idempotente.
+>
 > Si prefieres borrar todos los datos de prueba y empezar de cero en vez
 > de aplicar migraciones una a una, ejecuta primero
 > [`supabase/reset_database.sql`](./supabase/reset_database.sql) y después
@@ -152,6 +158,7 @@ src/
     supabase.ts        # cliente de Supabase + nombres de buckets
     types.ts            # tipos compartidos (Cliente, Vehiculo, DanoMarcador...)
     whatsapp.ts          # enlaces wa.me (informe de entrada, de salida, "listo")
+    useSolicitudesPendientes.ts # hook: nº de solicitudes de cita pendientes (badge de la pestaña)
   components/
     CarDamagePicker.tsx    # esquema del coche interactivo para marcar daños
     SignatureModal.tsx     # modal de firma digital + cláusulas legales + RGPD
@@ -159,15 +166,16 @@ src/
     ClientAuthScreen.tsx    # registro/login propio del Portal de cliente
     ResetPasswordScreen.tsx # pantalla de "elige tu nueva contraseña" (enlace del email)
     CuentaMenu.tsx           # menú de la cuenta en la barra: cambiar contraseña, cerrar sesión
-    PiezasUsadasModal.tsx   # registrar/quitar piezas de inventario usadas en una orden
+    PiezasUsadasModal.tsx   # registrar/quitar piezas de inventario usadas en una orden (con buscador)
     CitaRecogidaModal.tsx   # concierta cita de recogida y avisa al cliente ("Listo")
     CancelarOrdenModal.tsx  # cancela una orden de trabajo (pasa a "Cancelado")
-    SolicitudesPanel.tsx    # revisión de solicitudes creadas por clientes (en tiempo real)
+    SolicitudesPanel.tsx    # revisión de solicitudes de cita (Portal o registradas por el taller)
     AsignarRepuestoModal.tsx # asigna un coche de sustitución libre de la flota a una orden
     ExitReportPdf.tsx        # plantilla del informe PDF de entrega/salida
   pages/
-    InspectionForm.tsx    # formulario completo de check-in de entrada
-    ManagementPanel.tsx     # tablero de órdenes de trabajo por estado + solicitudes
+    SolicitudCitaPanel.tsx # paso 1 del check-in: reserva de cita (dueño+vehículo) — sección 31
+    InspectionForm.tsx    # paso 2 del check-in: daños, kilometraje y firma con el coche ya presente
+    ManagementPanel.tsx     # tablero de órdenes de trabajo por estado
     CheckoutForm.tsx         # entrega del vehículo (segunda firma + informe de salida)
     InventoryPanel.tsx       # inventario/almacén de repuestos del taller (solo encargado)
     PersonnelPanel.tsx        # alta, edición, desactivación y borrado de cuentas (solo encargado)
@@ -181,6 +189,7 @@ supabase/
   roles_finos_migration.sql       # migración incremental: roles finos, historial, Realtime, etc.
   gestion_personal_migration.sql   # migración incremental: activo (des/reactivar cuentas)
   solicitud_a_orden_migration.sql  # migración incremental: solicitud aceptada → orden "Solicitado"
+  checkin_split_y_decimales_migration.sql # migración incremental: cantidades decimales + Solicitud de cita del personal
   coches_repuesto_migration.sql    # migración incremental: flota de coches de sustitución
   functions/
     enviar-aviso-cliente/         # Edge Function: email real de "vehículo listo"
@@ -190,7 +199,14 @@ supabase/
 
 ## 6. Flujo del formulario de check-in
 
-1. Se rellenan los datos del cliente y del vehículo.
+> Desde esta tanda de cambios, el check-in de entrada es el **paso 2** del
+> flujo — ver sección 31 para el paso 1 ("Solicitud de cita"), donde se
+> registran los datos del dueño y el vehículo antes de que llegue al
+> taller. Se puede seguir haciendo un check-in completo de un tirón (sin
+> pasar por una solicitud previa) exactamente igual que antes.
+
+1. Se rellenan los datos del cliente y del vehículo — matrícula, marca y
+   modelo son obligatorios (no se puede guardar la inspección sin ellos).
 2. Se registran kilometraje, nivel de combustible y fotos del estado actual.
 3. Si el tipo de servicio es **Neumáticos**, aparecen dos campos adicionales:
    cuántos neumáticos se van a tocar (2 delanteros, 2 traseros, los 4, o uno
@@ -257,11 +273,17 @@ un mecánico pueda invocarlas aunque no tenga permiso directo de escritura
 sobre `inventario_items`), para que el registro y el stock nunca queden
 desincronizados.
 
-El desplegable para elegir el item muestra cuántas unidades quedan
-disponibles y no deja seleccionar los que están a 0 ("Agotado"); si pides
-más cantidad de la que queda, se avisa pero se permite continuar (por si el
-conteo del inventario estuviera desactualizado). En la propia pestaña de
-Inventario, además de la etiqueta "Pocas unidades" (≤ 3), los items a cero
+Un buscador por nombre o categoría filtra el desplegable antes de elegir el
+item, útil en catálogos largos. El desplegable muestra cuántas unidades
+quedan disponibles y no deja seleccionar los que están a 0 ("Agotado"); si
+pides más cantidad de la que queda, se avisa pero se permite continuar (por
+si el conteo del inventario estuviera desactualizado). La cantidad admite
+decimales (ej. 0.5 o 5.5) — necesario para líquidos como el aceite, donde
+distintos coches consumen cantidades fraccionarias distintas; el propio
+stock del inventario también se guarda con decimales por el mismo motivo
+(migración `checkin_split_y_decimales_migration.sql`).
+
+En la propia pestaña de Inventario, además de la etiqueta "Pocas unidades" (≤ 3), los items a cero
 se marcan claramente como "Agotado", hay un resumen en la cabecera con
 cuántos items están en cada situación, y un filtro rápido ("Poco stock")
 para verlos todos juntos.
@@ -517,9 +539,9 @@ quiere contactar.
 
 ## 19. Notificaciones en tiempo real
 
-La pestaña "Solicitudes de clientes" (dentro del Panel de gestión) y su
-contador de pendientes usan Supabase Realtime: en cuanto un cliente crea,
-cancela o el personal actualiza una solicitud, se refleja al momento en
+La pestaña "Solicitud de cita" (sección 30) y su aviso numérico en la barra
+de navegación usan Supabase Realtime: en cuanto un cliente crea, cancela o
+el personal registra/actualiza una solicitud, se refleja al momento en
 todas las sesiones de personal abiertas, sin recargar la página. Requiere
 que la tabla `solicitudes` esté añadida a la publicación
 `supabase_realtime`, lo cual ya hacen tanto `schema.sql` como
@@ -698,8 +720,8 @@ cronológica (agrupada por día) de:
   desde el Portal — un nuevo campo opcional de fecha/hora en el formulario
   de solicitud (`solicitudes.fecha_cita_checkin`), con la misma sencillez
   que la cita de recogida: una propuesta, sin gestión de franjas horarias
-  ni de aforo. El personal la ve también en **Solicitudes de clientes**, y
-  puede confirmarla o proponer otra por teléfono si no encaja.
+  ni de aforo. El personal la ve también en **Solicitud de cita** (sección
+  30), y puede confirmarla o proponer otra por teléfono si no encaja.
 
 No sustituye ningún calendario externo — es una vista de solo lectura
 pensada para ver de un vistazo qué se espera cada día.
@@ -739,7 +761,33 @@ propósito**: esta app vive de datos siempre frescos de Supabase (stock,
 último recurso si la red falla (por ejemplo, sin conexión) — nunca
 antepone una versión guardada a una petición que sí puede completarse.
 
-## 30. Próximos pasos sugeridos (fuera de este MVP)
+## 30. Solicitud de cita (paso 1 del check-in)
+
+El check-in se divide en dos pasos, para poder anotar una cita antes de que
+el vehículo esté físicamente en el taller:
+
+1. **Solicitud de cita** (pestaña propia, con icono de calendario): datos
+   del dueño y del vehículo (nombre, teléfono, email opcional, matrícula,
+   marca, modelo, tipo de servicio y, si se conoce, fecha propuesta para
+   traerlo) — SIN daños, kilometraje ni firma. Se rellena tanto desde el
+   Portal de cliente (sección 14) como, con el formulario "+ Nueva
+   solicitud" de esta misma pestaña, por el propio personal (una llamada
+   telefónica, o un cliente sin cuenta del Portal). Ambos orígenes caen en
+   la misma tabla `solicitudes` y en el mismo listado de abajo
+   ("Pendientes de revisar" / "Ya revisadas"), con una etiqueta "Del
+   taller" en las que registró el propio personal para distinguirlas.
+2. **Check-in** (sección 6): cuando el vehículo llega de verdad, se pulsa
+   "Recibir vehículo" sobre la solicitud aceptada (desde el Panel de
+   gestión) para completar el check-in real — daños, kilometraje y
+   firma — sin volver a teclear los datos del dueño ni del vehículo. Un
+   check-in también se puede seguir haciendo de un tirón, sin pasar antes
+   por una solicitud, exactamente igual que siempre.
+
+La pestaña de navegación muestra un aviso numérico con las solicitudes
+pendientes de revisar (cualquiera que sea su origen), en tiempo real vía
+Supabase Realtime.
+
+## 31. Próximos pasos sugeridos (fuera de este MVP)
 
 - Panel de gestión con calendario visual completo (`@fullcalendar/react`)
   en vez de la lista cronológica sencilla de la Agenda (sección 26).
@@ -750,3 +798,8 @@ antepone una versión guardada a una petición que sí puede completarse.
 - Historial de kilometraje real por vehículo (por ejemplo, pidiéndolo en
   cada visita) para que "Próximas revisiones" deje de depender de una
   estimación.
+- Borrado/archivado automático de órdenes ya entregadas transcurrido un
+  tiempo — pendiente de decidir el alcance exacto (¿borrar el registro
+  entero, con el riesgo de perder ese historial del vehículo, o solo
+  archivarlo/ocultarlo del tablero activo sin borrar nada?) antes de
+  implementarlo.

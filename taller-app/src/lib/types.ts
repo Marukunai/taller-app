@@ -233,9 +233,13 @@ export type EstadoSolicitud = 'pendiente' | 'aceptada' | 'rechazada' | 'cancelad
 export interface Solicitud {
   id: string;
   created_at: string;
-  cliente_auth_id: string;
+  // Nulo cuando la crea el propio personal (pestaña "Solicitud de cita",
+  // ej. una llamada telefónica) en vez de un cliente con cuenta del Portal.
+  cliente_auth_id: string | null;
   nombre_cliente: string;
-  email_cliente: string;
+  // Nulo también en el caso anterior: un cliente sin cuenta del Portal
+  // puede no haber dado ningún email por teléfono.
+  email_cliente: string | null;
   telefono_cliente: string | null;
   matricula: string | null;
   marca: string | null;

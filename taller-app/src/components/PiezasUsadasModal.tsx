@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AlertTriangle, Loader2, Trash2, Wrench, X } from 'lucide-react';
+import { AlertTriangle, Loader2, Search, Trash2, Wrench, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { InventarioItem, PiezaUsada } from '../lib/types';
 
@@ -28,6 +28,10 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
   const [cantidad, setCantidad] = useState('1');
   const [guardando, setGuardando] = useState(false);
   const [quitandoId, setQuitandoId] = useState<string | null>(null);
+  // Buscador del desplegable de inventario: con catálogos largos, encontrar
+  // "Aceite motor 10W40 5L" en una lista sin filtrar es tedioso — se filtra
+  // por nombre o categoría igual que en el propio Inventario.
+  const [busquedaItem, setBusquedaItem] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -58,6 +62,14 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
     () => inventario.find((i) => i.id === itemSeleccionado) ?? null,
     [inventario, itemSeleccionado],
   );
+
+  const inventarioFiltrado = useMemo(() => {
+    const q = busquedaItem.trim().toLowerCase();
+    if (!q) return inventario;
+    return inventario.filter(
+      (i) => i.nombre.toLowerCase().includes(q) || i.tipo.toLowerCase().includes(q),
+    );
+  }, [inventario, busquedaItem]);
 
   if (!open) return null;
 
@@ -190,25 +202,41 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
             >
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Item del inventario</label>
+                <div className="relative mb-2">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    value={busquedaItem}
+                    onChange={(e) => setBusquedaItem(e.target.value)}
+                    placeholder="Buscar item por nombre o categoría..."
+                    className="w-full rounded-lg border border-gray-300 py-2 pl-8 pr-3 text-sm"
+                  />
+                </div>
                 <select
                   value={itemSeleccionado}
                   onChange={(e) => setItemSeleccionado(e.target.value)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 >
                   <option value="">Selecciona un item...</option>
-                  {inventario.map((i) => (
+                  {inventarioFiltrado.map((i) => (
                     <option key={i.id} value={i.id} disabled={i.cantidad === 0}>
                       {i.nombre} — {i.cantidad === 0 ? 'Agotado' : `${i.cantidad} disponibles`}
                     </option>
                   ))}
                 </select>
+                {busquedaItem.trim() && inventarioFiltrado.length === 0 && (
+                  <p className="mt-1 text-xs text-gray-400">Ningún item coincide con esa búsqueda.</p>
+                )}
               </div>
               <div className="flex items-end gap-3">
                 <div className="flex-1">
                   <label className="mb-1 block text-sm font-medium text-gray-700">Cantidad</label>
+                  <p className="mb-1 -mt-0.5 text-xs text-gray-400">
+                    Admite decimales — ej. 0.5 o 5.5 para litros de aceite.
+                  </p>
                   <input
                     type="number"
-                    min={1}
+                    min={0.01}
+                    step="0.01"
                     value={cantidad}
                     onChange={(e) => setCantidad(e.target.value)}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"

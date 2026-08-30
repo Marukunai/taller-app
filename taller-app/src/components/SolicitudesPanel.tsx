@@ -238,18 +238,28 @@ function TarjetaCabecera({ s }: { s: Solicitud }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-gray-900">{s.nombre_cliente}</p>
-          <p className="flex items-center gap-1 truncate text-xs text-gray-500">
-            <Mail className="h-3 w-3 shrink-0" /> {s.email_cliente}
-          </p>
+          {s.email_cliente && (
+            <p className="flex items-center gap-1 truncate text-xs text-gray-500">
+              <Mail className="h-3 w-3 shrink-0" /> {s.email_cliente}
+            </p>
+          )}
           {s.telefono_cliente && (
             <p className="flex items-center gap-1 text-xs text-gray-500">
               <Phone className="h-3 w-3 shrink-0" /> {s.telefono_cliente}
             </p>
           )}
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${badge.clase}`}>
-          {badge.label}
-        </span>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${badge.clase}`}>{badge.label}</span>
+          {/* Sin cuenta del Portal: la registró el propio taller (llamada
+           *  telefónica, walk-in...) desde la pestaña "Solicitud de cita",
+           *  no el cliente por su cuenta — ver SolicitudCitaPanel.tsx. */}
+          {!s.cliente_auth_id && (
+            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+              Del taller
+            </span>
+          )}
+        </div>
       </div>
       {s.matricula && (
         <p className="flex items-center gap-1.5 text-xs text-gray-600">

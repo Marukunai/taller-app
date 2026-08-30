@@ -169,6 +169,7 @@ export default function InspectionForm({
       return 'Completa nombre, DNI y teléfono del cliente.';
     }
     if (!matricula.trim()) return 'La matrícula del vehículo es obligatoria.';
+    if (!marca.trim() || !modelo.trim()) return 'La marca y el modelo del vehículo son obligatorios.';
     if (!kilometraje.trim() || Number.isNaN(Number(kilometraje))) {
       return 'Indica un kilometraje válido.';
     }
@@ -385,8 +386,8 @@ export default function InspectionForm({
         <Seccion titulo="Vehículo y servicio" icono={<Wrench className="h-4 w-4" />} color="violet">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Campo label="Matrícula" value={matricula} onChange={setMatricula} required />
-            <Campo label="Marca" value={marca} onChange={setMarca} />
-            <Campo label="Modelo" value={modelo} onChange={setModelo} />
+            <Campo label="Marca" value={marca} onChange={setMarca} required />
+            <Campo label="Modelo" value={modelo} onChange={setModelo} required />
             <Campo label="Color" value={color} onChange={setColor} placeholder="Ej. Rojo, Gris plata" />
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de servicio</label>

@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   BarChart3,
   Calendar,
+  CalendarClock,
   Car,
   ClipboardCheck,
   History,
@@ -34,9 +35,12 @@ import ClientPortal from './pages/ClientPortal';
 import FlotaRepuestoPanel from './pages/FlotaRepuestoPanel';
 import AgendaPanel from './pages/AgendaPanel';
 import EstadisticasPanel from './pages/EstadisticasPanel';
+import SolicitudCitaPanel from './pages/SolicitudCitaPanel';
+import { useSolicitudesPendientes } from './lib/useSolicitudesPendientes';
 import type { OrdenPendienteRecepcion, Perfil } from './lib/types';
 
 type Vista =
+  | 'solicitud_cita'
   | 'checkin'
   | 'panel'
   | 'checkout'
@@ -80,6 +84,12 @@ function App() {
   // propia persona como si se lo mandó un encargado desde Gestión de
   // personal.
   const [recuperandoContrasena, setRecuperandoContrasena] = useState(false);
+  // Badge de "Solicitud de cita" en la barra de navegación — cuántas están
+  // pendientes de revisar, tanto si las creó un cliente desde el Portal
+  // como el propio personal (ver SolicitudCitaPanel.tsx). Desactivado antes
+  // de haber sesión o para una cuenta de cliente del Portal (ni siquiera ve
+  // esta pestaña) — ver el propio hook para el motivo de pasar `enabled`.
+  const solicitudesPendientes = useSolicitudesPendientes(!!session && perfil?.rol !== 'cliente');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -256,7 +266,14 @@ function App() {
   // Lista de pestañas en un solo sitio, en vez de repetir cada TabButton
   // en dos partes del JSX: se recorre dos veces al pintar (fila horizontal
   // a partir de `md`, desplegable apilado por debajo de eso).
-  const tabs: { key: Vista; label: string; icon: ReactNode; onClick: () => void }[] = [
+  const tabs: { key: Vista; label: string; icon: ReactNode; onClick: () => void; badge?: number }[] = [
+    {
+      key: 'solicitud_cita',
+      label: 'Solicitud de cita',
+      icon: <CalendarClock className="h-4 w-4" />,
+      onClick: () => setVista('solicitud_cita'),
+      badge: solicitudesPendientes,
+    },
     {
       key: 'checkin',
       label: 'Check-in',
@@ -348,7 +365,13 @@ function App() {
 
           <div className="hidden flex-1 flex-wrap items-center gap-2 md:flex">
             {tabs.map((tab) => (
-              <TabButton key={tab.key} activo={vista === tab.key} onClick={tab.onClick} icon={tab.icon}>
+              <TabButton
+                key={tab.key}
+                activo={vista === tab.key}
+                onClick={tab.onClick}
+                icon={tab.icon}
+                badge={tab.badge}
+              >
                 {tab.label}
               </TabButton>
             ))}
@@ -385,6 +408,7 @@ function App() {
                   setMenuMovilAbierto(false);
                 }}
                 icon={tab.icon}
+                badge={tab.badge}
                 className="w-full justify-start"
               >
                 {tab.label}
@@ -394,6 +418,7 @@ function App() {
         )}
       </nav>
 
+      {vista === 'solicitud_cita' && <SolicitudCitaPanel />}
       {vista === 'checkin' && (
         <InspectionForm
           ordenPendiente={ordenRecepcionPendiente}
@@ -439,9 +464,12 @@ interface TabButtonProps {
    *  ocupe todo el ancho y quede alineada a la izquierda en vez de con el
    *  tamaño ajustado al texto, como en la fila horizontal de escritorio. */
   className?: string;
+  /** Aviso numérico junto a la etiqueta (ej. solicitudes de cita pendientes
+   *  de revisar) — no se muestra si es 0 o no se pasa. */
+  badge?: number;
 }
 
-function TabButton({ activo, onClick, icon, children, className = '' }: TabButtonProps) {
+function TabButton({ activo, onClick, icon, children, className = '', badge }: TabButtonProps) {
   return (
     <button
       type="button"
@@ -452,6 +480,11 @@ function TabButton({ activo, onClick, icon, children, className = '' }: TabButto
     >
       {icon}
       {children}
+      {!!badge && (
+        <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[11px] font-semibold text-amber-950">
+          {badge}
+        </span>
+      )}
     </button>
   );
 }

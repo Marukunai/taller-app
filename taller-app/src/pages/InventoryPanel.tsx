@@ -581,6 +581,7 @@ export default function InventoryPanel() {
               <input
                 type="number"
                 min={0}
+                step="0.01"
                 value={form.cantidad}
                 onChange={(e) => setForm((p) => ({ ...p, cantidad: e.target.value }))}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
@@ -723,6 +724,7 @@ export default function InventoryPanel() {
                             <input
                               type="number"
                               min={0}
+                              step="0.01"
                               value={formEdicion.cantidad}
                               onChange={(e) => setFormEdicion((p) => ({ ...p, cantidad: e.target.value }))}
                               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"

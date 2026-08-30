@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowRight,
   Car,
-  ClipboardList,
   Euro,
   ImageOff,
   Loader2,
@@ -17,7 +16,6 @@ import { supabase } from '../lib/supabase';
 import PiezasUsadasModal from '../components/PiezasUsadasModal';
 import CitaRecogidaModal from '../components/CitaRecogidaModal';
 import CancelarOrdenModal from '../components/CancelarOrdenModal';
-import SolicitudesPanel from '../components/SolicitudesPanel';
 import AsignarRepuestoModal from '../components/AsignarRepuestoModal';
 import PresupuestoModal from '../components/PresupuestoModal';
 import type { EstadoOrden, EstadoPresupuesto, OrdenPendienteRecepcion, TipoServicio } from '../lib/types';
@@ -126,12 +124,14 @@ const SELECT_ORDENES =
 
 /**
  * Tablero de órdenes de trabajo agrupadas por estado, con un botón por
- * tarjeta para avanzar al siguiente estado del flujo del taller. Incluye
- * también, en una pestaña aparte, las solicitudes que los clientes crean
- * ellos mismos desde el Portal de cliente.
+ * tarjeta para avanzar al siguiente estado del flujo del taller. Las
+ * solicitudes de cita (tanto las que crea el cliente desde el Portal como
+ * las que registra el propio personal) viven en su propia pestaña de nivel
+ * superior — ver SolicitudCitaPanel.tsx / App.tsx — en vez de aquí dentro,
+ * para que el aviso de "hay una cita pendiente de revisar" no dependa de
+ * haber entrado primero al Panel de gestión.
  */
 export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, esEncargado }: ManagementPanelProps) {
-  const [pestana, setPestana] = useState<'ordenes' | 'solicitudes'>('ordenes');
   const [ordenes, setOrdenes] = useState<OrdenPanel[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -258,8 +258,6 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
     );
   };
 
-  const contadorPendientes = useSolicitudesPendientes();
-
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -267,53 +265,17 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
           <h1 className="text-2xl font-bold text-gray-900">Panel de gestión</h1>
           <p className="text-sm text-gray-500">Órdenes de trabajo agrupadas por estado.</p>
         </div>
-        {pestana === 'ordenes' && (
-          <button
-            type="button"
-            onClick={cargarOrdenes}
-            disabled={cargando}
-            className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-60"
-          >
-            <RefreshCw className={`h-4 w-4 ${cargando ? 'animate-spin' : ''}`} /> Actualizar
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={cargarOrdenes}
+          disabled={cargando}
+          className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-60"
+        >
+          <RefreshCw className={`h-4 w-4 ${cargando ? 'animate-spin' : ''}`} /> Actualizar
+        </button>
       </header>
 
-      <div className="mb-6 flex gap-2 border-b border-gray-200">
-        <button
-          type="button"
-          onClick={() => setPestana('ordenes')}
-          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition ${
-            pestana === 'ordenes'
-              ? 'border-indigo-600 text-indigo-700'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Wrench className="h-4 w-4" /> Órdenes
-        </button>
-        <button
-          type="button"
-          onClick={() => setPestana('solicitudes')}
-          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition ${
-            pestana === 'solicitudes'
-              ? 'border-indigo-600 text-indigo-700'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <ClipboardList className="h-4 w-4" /> Solicitudes de clientes
-          {contadorPendientes > 0 && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-              {contadorPendientes}
-            </span>
-          )}
-        </button>
-      </div>
-
-      {pestana === 'solicitudes' ? (
-        <SolicitudesPanel />
-      ) : (
-        <>
-          {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
+      {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
           {cargando && ordenes.length === 0 ? (
             <p className="flex items-center gap-2 text-sm text-gray-500">
@@ -542,8 +504,6 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
               })}
             </div>
           )}
-        </>
-      )}
 
       {piezasModal && (
         <PiezasUsadasModal
@@ -622,46 +582,6 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
       )}
     </div>
   );
-}
-
-/** Cuenta las solicitudes pendientes para el badge de la pestaña, sin
- *  duplicar toda la carga de datos de SolicitudesPanel (consulta ligera,
- *  solo trae el id). Se refresca al montar ManagementPanel Y en tiempo
- *  real (Supabase Realtime) cada vez que cambia algo en `solicitudes` —
- *  así el badge aparece/desaparece solo, sin tener que cambiar de pestaña
- *  ni recargar la página, en cuanto un cliente crea, cancela o el propio
- *  personal acepta/rechaza una solicitud. Requiere que `solicitudes` esté
- *  añadida a la publicación `supabase_realtime` (ver schema.sql /
- *  roles_finos_migration.sql) — si no lo está, este hook simplemente se
- *  queda con el recuento inicial hasta el próximo montaje. */
-function useSolicitudesPendientes(): number {
-  const [contador, setContador] = useState(0);
-
-  const cargarContador = useCallback(async () => {
-    const { count } = await supabase
-      .from('solicitudes')
-      .select('id', { count: 'exact', head: true })
-      .eq('estado', 'pendiente');
-    setContador(count ?? 0);
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    cargarContador();
-
-    const canal = supabase
-      .channel('solicitudes-contador')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes' }, () => {
-        cargarContador();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(canal);
-    };
-  }, [cargarContador]);
-
-  return contador;
 }
 
 /** Traduce un color escrito en texto libre (español, lo más habitual en un

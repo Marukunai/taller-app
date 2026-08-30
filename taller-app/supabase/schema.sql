@@ -86,7 +86,9 @@ create table if not exists inventario_items (
   nombre text not null,
   tipo text not null,      -- categoría: 'Frenos', 'Filtros', 'Neumáticos'...
   tamano text,             -- talla/medida si aplica (ej. '205/55 R16'), si no null
-  cantidad int not null default 0,
+  -- numeric (no int): hay consumos fraccionarios, ej. 0.5 o 5.5 litros de
+  -- aceite en una revisión — ver piezas_usadas.cantidad más abajo.
+  cantidad numeric(10,2) not null default 0,
   imagen_url text,         -- foto opcional para distinguir el item visualmente
   almacen_id uuid not null references almacenes(id) on delete cascade,
   unique (nombre, almacen_id)
@@ -102,7 +104,9 @@ create table if not exists piezas_usadas (
   orden_id uuid not null references ordenes_trabajo(id) on delete cascade,
   item_id uuid references inventario_items(id) on delete set null,
   nombre_item text not null,
-  cantidad int not null check (cantidad > 0)
+  -- numeric: algunos coches consumen cantidades fraccionarias de aceite u
+  -- otros líquidos (ej. 0.5 L o 5.5 L), no solo unidades enteras de pieza.
+  cantidad numeric(10,2) not null check (cantidad > 0)
 );
 
 -- 7. TABLA DE PERFILES (rol de cada cuenta de Supabase Auth)
@@ -208,9 +212,14 @@ $$;
 create table if not exists solicitudes (
   id uuid primary key default gen_random_uuid(),
   created_at timestamp with time zone default now(),
-  cliente_auth_id uuid not null references auth.users(id) on delete cascade,
+  -- Nulo cuando la crea el propio personal desde la pestaña "Solicitud de
+  -- cita" (llamada telefónica o cliente sin cuenta del Portal) en vez de un
+  -- cliente desde su propia cuenta — ver el nuevo SolicitudCitaPanel.tsx.
+  cliente_auth_id uuid references auth.users(id) on delete cascade,
   nombre_cliente text not null,
-  email_cliente text not null,
+  -- Nulo también en el caso anterior: un cliente sin cuenta del Portal
+  -- puede no haber dado ningún email por teléfono.
+  email_cliente text,
   telefono_cliente text,
   matricula text,
   marca text,
@@ -382,6 +391,13 @@ alter table solicitudes enable row level security;
 -- El cliente crea y ve sus propias solicitudes; el personal las ve todas.
 create policy "Cliente crea sus solicitudes" on solicitudes
   for insert with check (auth.uid() = cliente_auth_id);
+-- El personal también puede crear solicitudes directamente (pestaña
+-- "Solicitud de cita"), para una llamada telefónica o un cliente sin cuenta
+-- del Portal — sin esto, un insert de personal con cliente_auth_id nulo
+-- quedaría bloqueado por RLS (ninguna política de insert lo cubría).
+drop policy if exists "Personal crea solicitudes" on solicitudes;
+create policy "Personal crea solicitudes" on solicitudes
+  for insert with check (es_personal());
 create policy "Ver solicitudes propias o ser personal" on solicitudes
   for select using (auth.uid() = cliente_auth_id or es_personal());
 -- El personal puede actualizar cualquier solicitud (aceptar/rechazar).
@@ -537,7 +553,7 @@ using (bucket_id = 'inventario-imagenes' and es_encargado());
 create or replace function registrar_pieza_usada(
   p_orden_id uuid,
   p_item_id uuid,
-  p_cantidad int
+  p_cantidad numeric
 )
 returns void
 language plpgsql
@@ -577,7 +593,7 @@ security definer set search_path = public
 as $$
 declare
   v_item_id uuid;
-  v_cantidad int;
+  v_cantidad numeric;
 begin
   if not es_personal() then
     raise exception 'No autorizado';
