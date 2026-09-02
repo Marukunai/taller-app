@@ -43,6 +43,16 @@ const FORM_VACIO: NuevoItemForm = {
   imagenPreview: null,
 };
 
+interface InventoryPanelProps {
+  /** Un mecánico puede CONSULTAR el inventario (para saber si hay stock
+   *  antes de empezar un trabajo), pero solo el encargado puede
+   *  añadir/editar/borrar items o almacenes, ajustar cantidades o tocar
+   *  precios — igual que ya impone la RLS de Supabase (ver schema.sql:
+   *  "Encargado Inventario crea/actualiza/borra"). Sin este prop (o en
+   *  false) el panel se muestra en modo solo lectura. */
+  esEncargado: boolean;
+}
+
 /**
  * Inventario/almacén de repuestos y materiales del taller. Es un catálogo
  * propio del taller (no depende de clientes ni órdenes de trabajo): viene
@@ -53,7 +63,7 @@ const FORM_VACIO: NuevoItemForm = {
  * si solo hay uno ("Almacén 1", el que se crea por defecto) no se muestra
  * ningún selector, para no complicar la pantalla a quien no lo necesita.
  */
-export default function InventoryPanel() {
+export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
   const [almacenes, setAlmacenes] = useState<Almacen[]>([]);
   const [almacenActivo, setAlmacenActivo] = useState<string | null>(null);
   const [nuevoAlmacenAbierto, setNuevoAlmacenAbierto] = useState(false);
@@ -423,14 +433,22 @@ export default function InventoryPanel() {
             )}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setFormAbierto((v) => !v)}
-          className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
-        >
-          <Plus className="h-4 w-4" /> Añadir item
-        </button>
+        {esEncargado && (
+          <button
+            type="button"
+            onClick={() => setFormAbierto((v) => !v)}
+            className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+          >
+            <Plus className="h-4 w-4" /> Añadir item
+          </button>
+        )}
       </header>
+      {!esEncargado && (
+        <p className="mb-5 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+          Modo consulta: puedes ver el stock disponible, pero solo el encargado puede añadir,
+          editar o ajustar cantidades.
+        </p>
+      )}
 
       {/* Selector de almacén: solo se muestra si hay más de uno — un taller
           de una sola nave no ve ningún control adicional aquí. */}
@@ -453,43 +471,44 @@ export default function InventoryPanel() {
               {a.nombre}
             </button>
           ))}
-          {nuevoAlmacenAbierto ? (
-            <form onSubmit={crearAlmacen} className="flex items-center gap-1.5">
-              <input
-                autoFocus
-                value={nombreNuevoAlmacen}
-                onChange={(e) => setNombreNuevoAlmacen(e.target.value)}
-                placeholder={`Almacén ${almacenes.length + 1}`}
-                className="rounded-full border border-gray-300 px-3 py-1.5 text-sm"
-              />
-              <button
-                type="submit"
-                disabled={creandoAlmacen}
-                className="rounded-full bg-gray-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
-              >
-                {creandoAlmacen ? '...' : 'Crear'}
-              </button>
+          {esEncargado &&
+            (nuevoAlmacenAbierto ? (
+              <form onSubmit={crearAlmacen} className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={nombreNuevoAlmacen}
+                  onChange={(e) => setNombreNuevoAlmacen(e.target.value)}
+                  placeholder={`Almacén ${almacenes.length + 1}`}
+                  className="rounded-full border border-gray-300 px-3 py-1.5 text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={creandoAlmacen}
+                  className="rounded-full bg-gray-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+                >
+                  {creandoAlmacen ? '...' : 'Crear'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNuevoAlmacenAbierto(false)}
+                  className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100"
+                  aria-label="Cancelar"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            ) : (
               <button
                 type="button"
-                onClick={() => setNuevoAlmacenAbierto(false)}
-                className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100"
-                aria-label="Cancelar"
+                onClick={() => setNuevoAlmacenAbierto(true)}
+                className="flex items-center gap-1 rounded-full border border-dashed border-gray-300 px-3 py-1.5 text-sm text-gray-500 hover:border-gray-400 hover:text-gray-700"
               >
-                <X className="h-3.5 w-3.5" />
+                <Plus className="h-3.5 w-3.5" /> Nuevo almacén
               </button>
-            </form>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setNuevoAlmacenAbierto(true)}
-              className="flex items-center gap-1 rounded-full border border-dashed border-gray-300 px-3 py-1.5 text-sm text-gray-500 hover:border-gray-400 hover:text-gray-700"
-            >
-              <Plus className="h-3.5 w-3.5" /> Nuevo almacén
-            </button>
-          )}
+            ))}
         </div>
       )}
-      {almacenes.length === 1 && !nuevoAlmacenAbierto && (
+      {esEncargado && almacenes.length === 1 && !nuevoAlmacenAbierto && (
         <button
           type="button"
           onClick={() => setNuevoAlmacenAbierto(true)}
@@ -808,7 +827,8 @@ export default function InventoryPanel() {
                             {item.nombre}
                           </p>
                           {item.tamano && <p className="text-sm text-gray-500">{item.tamano}</p>}
-                          {editandoPrecioId === item.id ? (
+                          {esEncargado &&
+                          (editandoPrecioId === item.id ? (
                             <div className="mt-1 flex items-center gap-1.5">
                               <input
                                 autoFocus
@@ -848,7 +868,7 @@ export default function InventoryPanel() {
                               <Euro className="h-3 w-3" />
                               {precios[item.id] != null ? `${precios[item.id].toFixed(2)} €/ud` : 'Añadir precio'}
                             </button>
-                          )}
+                          ))}
                           {item.cantidad === 0 ? (
                             <span className="mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">
                               Agotado
@@ -862,7 +882,13 @@ export default function InventoryPanel() {
                           )}
                         </div>
                         </div>
-                        {confirmandoBorradoId === item.id ? (
+                        {!esEncargado ? (
+                          <div className="flex shrink-0 items-center gap-1.5 self-end sm:self-auto">
+                            <span className="rounded-full bg-gray-100 px-3 py-1 text-base font-semibold text-gray-700">
+                              {item.cantidad}
+                            </span>
+                          </div>
+                        ) : confirmandoBorradoId === item.id ? (
                           <div className="flex shrink-0 flex-col items-end gap-1 self-end sm:flex-row sm:items-center sm:self-auto">
                             <span className="text-xs text-gray-500">¿Borrar item?</span>
                             <div className="flex items-center gap-1.5">

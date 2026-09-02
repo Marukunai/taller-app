@@ -258,9 +258,10 @@ function App() {
     );
   }
 
-  // El mecánico no ve Inventario ni Gestión de personal (ni verá ningún
-  // precio/coste que se añada en el futuro) — solo el encargado, ver
-  // AskUserQuestion de la batch de roles finos.
+  // El mecánico SÍ puede consultar el Inventario (para saber si hay stock
+  // antes de empezar un trabajo), pero en modo solo lectura — ver
+  // InventoryPanel.tsx. Gestión de personal, Flota y Estadísticas (y
+  // cualquier precio/coste) siguen reservados al encargado.
   const esEncargado = perfil.rol === 'encargado';
 
   // Lista de pestañas en un solo sitio, en vez de repetir cada TabButton
@@ -316,6 +317,12 @@ function App() {
       icon: <Calendar className="h-4 w-4" />,
       onClick: () => setVista('agenda'),
     },
+    {
+      key: 'inventario',
+      label: 'Inventario',
+      icon: <Package className="h-4 w-4" />,
+      onClick: () => setVista('inventario'),
+    },
     ...(esEncargado
       ? [
           {
@@ -323,12 +330,6 @@ function App() {
             label: 'Estadísticas',
             icon: <BarChart3 className="h-4 w-4" />,
             onClick: () => setVista('estadisticas'),
-          },
-          {
-            key: 'inventario' as Vista,
-            label: 'Inventario',
-            icon: <Package className="h-4 w-4" />,
-            onClick: () => setVista('inventario'),
           },
           {
             key: 'gestion_personal' as Vista,
@@ -437,7 +438,7 @@ function App() {
       )}
       {vista === 'historial' && <HistorialVehiculo matriculaInicial={matriculaBuscada} />}
       {vista === 'proximas' && <ProximasRevisiones />}
-      {vista === 'inventario' && esEncargado && <InventoryPanel />}
+      {vista === 'inventario' && <InventoryPanel esEncargado={esEncargado} />}
       {vista === 'gestion_personal' && esEncargado && <PersonnelPanel miId={session.user.id} />}
       {vista === 'flota_repuesto' && esEncargado && <FlotaRepuestoPanel />}
       {vista === 'agenda' && <AgendaPanel />}

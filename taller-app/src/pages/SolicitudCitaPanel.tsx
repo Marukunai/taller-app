@@ -9,6 +9,7 @@ const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
   { value: 'mantenimiento', label: 'Mantenimiento' },
   { value: 'neumaticos', label: 'Neumáticos' },
   { value: 'averia', label: 'Avería' },
+  { value: 'pre_itv', label: 'Pre ITV' },
 ];
 
 const OPCIONES_NEUMATICOS: { value: NeumaticosCantidad; label: string }[] = [

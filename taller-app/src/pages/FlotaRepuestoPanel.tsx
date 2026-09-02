@@ -9,9 +9,16 @@ interface NuevoCocheForm {
   marca: string;
   modelo: string;
   notas: string;
+  precioHora: string;
 }
 
-const FORM_VACIO: NuevoCocheForm = { matricula: '', marca: '', modelo: '', notas: '' };
+const FORM_VACIO: NuevoCocheForm = {
+  matricula: '',
+  marca: '',
+  modelo: '',
+  notas: '',
+  precioHora: '',
+};
 
 /** Info del préstamo activo de un coche de la flota (si lo hay ahora mismo),
  *  para mostrar a quién se le ha prestado sin tener que ir a buscarlo al
@@ -50,7 +57,7 @@ export default function FlotaRepuestoPanel() {
     setError(null);
     const { data: flota, error: flotaError } = await supabase
       .from('coches_repuesto')
-      .select('id, matricula, marca, modelo, notas, baja')
+      .select('id, matricula, marca, modelo, notas, baja, precio_hora')
       .order('matricula', { ascending: true });
     if (flotaError) {
       setError(flotaError.message);
@@ -106,6 +113,7 @@ export default function FlotaRepuestoPanel() {
         marca: form.marca.trim() || null,
         modelo: form.modelo.trim() || null,
         notas: form.notas.trim() || null,
+        precio_hora: form.precioHora.trim() ? Number(form.precioHora) : null,
       })
       .select()
       .single();
@@ -126,6 +134,7 @@ export default function FlotaRepuestoPanel() {
       marca: coche.marca ?? '',
       modelo: coche.modelo ?? '',
       notas: coche.notas ?? '',
+      precioHora: coche.precio_hora != null ? String(coche.precio_hora) : '',
     });
   };
 
@@ -144,6 +153,7 @@ export default function FlotaRepuestoPanel() {
         marca: formEdicion.marca.trim() || null,
         modelo: formEdicion.modelo.trim() || null,
         notas: formEdicion.notas.trim() || null,
+        precio_hora: formEdicion.precioHora.trim() ? Number(formEdicion.precioHora) : null,
       })
       .eq('id', coche.id)
       .select()
@@ -196,6 +206,18 @@ export default function FlotaRepuestoPanel() {
             <Campo label="Marca" value={formEdicion.marca} onChange={(v) => setFormEdicion((p) => ({ ...p, marca: v }))} />
             <Campo label="Modelo" value={formEdicion.modelo} onChange={(v) => setFormEdicion((p) => ({ ...p, modelo: v }))} />
             <Campo label="Notas" value={formEdicion.notas} onChange={(v) => setFormEdicion((p) => ({ ...p, notas: v }))} />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Precio por hora (€, opcional)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={formEdicion.precioHora}
+                onChange={(e) => setFormEdicion((p) => ({ ...p, precioHora: e.target.value }))}
+                placeholder="Ej. 5.00"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </div>
           </div>
           <button
             type="submit"
@@ -228,6 +250,9 @@ export default function FlotaRepuestoPanel() {
             {[coche.marca, coche.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo'}
           </p>
           {coche.notas && <p className="truncate text-xs text-gray-400">{coche.notas}</p>}
+          {coche.precio_hora != null && (
+            <p className="text-xs font-medium text-gray-500">{coche.precio_hora.toFixed(2)} €/hora</p>
+          )}
           {coche.baja ? (
             <span className="mt-1 inline-block rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
               De baja
@@ -318,6 +343,18 @@ export default function FlotaRepuestoPanel() {
             <Campo label="Marca" value={form.marca} onChange={(v) => setForm((p) => ({ ...p, marca: v }))} />
             <Campo label="Modelo" value={form.modelo} onChange={(v) => setForm((p) => ({ ...p, modelo: v }))} />
             <Campo label="Notas (opcional)" value={form.notas} onChange={(v) => setForm((p) => ({ ...p, notas: v }))} />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Precio por hora (€, opcional)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={form.precioHora}
+                onChange={(e) => setForm((p) => ({ ...p, precioHora: e.target.value }))}
+                placeholder="Ej. 5.00"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </div>
           </div>
           <button
             type="submit"

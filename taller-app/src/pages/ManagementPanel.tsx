@@ -55,7 +55,13 @@ const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
   mantenimiento: 'Mantenimiento',
   neumaticos: 'Neumáticos',
   averia: 'Avería',
+  pre_itv: 'Pre ITV',
 };
+
+/** Un mecánico solo ve las columnas de trabajo activo — "Entregado" y
+ *  "Cancelado" son gestión (histórico/facturación), reservada al
+ *  encargado, igual que el Presupuesto (ver `esEncargado` más abajo). */
+const ESTADOS_SOLO_ENCARGADO: EstadoOrden[] = ['entregado', 'cancelado'];
 
 const ETIQUETA_PRESUPUESTO_CORTA: Record<EstadoPresupuesto, string> = {
   borrador: 'borrador',
@@ -268,7 +274,7 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
+    <div className="mx-auto max-w-[1600px] px-4 py-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Panel de gestión</h1>
@@ -291,8 +297,18 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
               <Loader2 className="h-4 w-4 animate-spin" /> Cargando órdenes...
             </p>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
-              {ESTADOS.map((columna) => {
+            <div
+              className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+                esEncargado ? 'md:grid-cols-3 xl:grid-cols-6' : 'lg:grid-cols-4'
+              }`}
+            >
+              {/* Un mecánico no gestiona histórico/facturación: no ve las
+                  columnas "Entregado" ni "Cancelado" (solo el encargado) —
+                  ver ESTADOS_SOLO_ENCARGADO. De paso, con menos columnas
+                  cada tarjeta sale más grande en pantallas normales. */}
+              {ESTADOS.filter(
+                (columna) => esEncargado || !ESTADOS_SOLO_ENCARGADO.includes(columna.value),
+              ).map((columna) => {
                 const ordenesEstado = ordenes.filter((o) => o.estado === columna.value);
                 // "Entregado" oculta (que no borra) los coches entregados
                 // hace más de 3 días — ver OCULTAR_ENTREGADOS_TRAS_MS.
@@ -306,7 +322,7 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                     : ordenesEstado;
                 const antiguosOcultos = ordenesEstado.length - ordenesColumna.length;
                 return (
-                  <div key={columna.value} className={`rounded-2xl ${columna.fondo} p-3`}>
+                  <div key={columna.value} className={`rounded-2xl ${columna.fondo} p-4`}>
                     <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
                       <span className={`h-2.5 w-2.5 rounded-full ${columna.barra}`} />
                       {columna.label}
@@ -338,30 +354,30 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                         return (
                           <div
                             key={orden.id}
-                            className="space-y-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-gray-100"
+                            className="space-y-2.5 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100"
                           >
-                            <div className="flex items-start gap-2.5">
+                            <div className="flex items-start gap-3">
                               {foto ? (
                                 <img
                                   src={foto}
                                   alt=""
-                                  className="h-12 w-12 shrink-0 rounded-lg border border-gray-100 object-cover"
+                                  className="h-14 w-14 shrink-0 rounded-lg border border-gray-100 object-cover"
                                 />
                               ) : (
-                                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-300">
+                                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-300">
                                   <ImageOff className="h-5 w-5" />
                                 </span>
                               )}
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-900">
-                                  <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                <div className="flex items-center gap-1.5 text-base font-semibold text-gray-900">
+                                  <Car className="h-4 w-4 shrink-0 text-gray-400" />
                                   <span className="truncate">{matricula ?? '—'}</span>
                                 </div>
-                                <p className="truncate text-xs text-gray-500">
+                                <p className="truncate text-sm text-gray-500">
                                   {marcaModelo || 'Sin marca/modelo'}
                                 </p>
                                 {orden.vehiculos?.color && (
-                                  <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-gray-500">
+                                  <p className="mt-0.5 inline-flex items-center gap-1 text-sm text-gray-500">
                                     <span
                                       className="h-2.5 w-2.5 rounded-full border border-gray-300"
                                       style={{ backgroundColor: colorCss(orden.vehiculos.color) }}
@@ -371,15 +387,15 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                                 )}
                               </div>
                             </div>
-                            <p className="truncate text-xs text-gray-600">
+                            <p className="truncate text-sm text-gray-600">
                               {clienteNombre ?? 'Cliente desconocido'}
                             </p>
                             {clienteTelefono && (
-                              <p className="flex items-center gap-1 text-xs text-gray-400">
-                                <Phone className="h-3 w-3" /> {clienteTelefono}
+                              <p className="flex items-center gap-1 text-sm text-gray-400">
+                                <Phone className="h-3.5 w-3.5" /> {clienteTelefono}
                               </p>
                             )}
-                            <p className="text-xs font-medium text-blue-600">
+                            <p className="text-sm font-medium text-blue-600">
                               {ETIQUETAS_SERVICIO[orden.tipo_servicio]}
                             </p>
                             {orden.descripcion_averia && (

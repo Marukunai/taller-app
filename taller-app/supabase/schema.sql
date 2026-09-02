@@ -30,7 +30,7 @@ create table if not exists ordenes_trabajo (
   created_at timestamp with time zone default now(),
   vehiculo_id uuid references vehiculos(id),
   estado text default 'solicitado', -- 'solicitado' | 'recepcionado' | 'en_proceso' | 'listo' | 'entregado' | 'cancelado'
-  tipo_servicio text not null,      -- 'mantenimiento' | 'neumaticos' | 'averia'
+  tipo_servicio text not null,      -- 'mantenimiento' | 'neumaticos' | 'averia' | 'pre_itv'
   descripcion_averia text,
   fecha_entrada timestamp with time zone,
   fecha_salida_estimada timestamp with time zone,
@@ -61,8 +61,15 @@ create table if not exists inspecciones_entrada (
   observaciones text,               -- notas generales del estado del vehículo
   firma_cliente_url text not null,
   pdf_informe_url text,
-  created_at timestamp with time zone default now()
+  created_at timestamp with time zone default now(),
+  -- Documentación del conductor/vehículo — se exige al menos una de las
+  -- dos en el check-in (ver validación en InspectionForm.tsx), nunca las
+  -- dos obligatoriamente.
+  permiso_conducir_url text,
+  ficha_tecnica_url text
 );
+alter table inspecciones_entrada add column if not exists permiso_conducir_url text;
+alter table inspecciones_entrada add column if not exists ficha_tecnica_url text;
 
 -- 5a. TABLA DE ALMACENES
 -- La mayoría de talleres tienen uno solo ("Almacén 1"), pero una cadena con
@@ -257,8 +264,11 @@ create table if not exists coches_repuesto (
   marca text,
   modelo text,
   notas text,
-  baja boolean not null default false
+  baja boolean not null default false,
+  -- Precio por hora de uso (opcional) — null = no se cobra el préstamo.
+  precio_hora numeric(10,2)
 );
+alter table coches_repuesto add column if not exists precio_hora numeric(10,2);
 
 -- Columnas añadidas a `ordenes_trabajo` en batches posteriores al DDL
 -- original de la tabla (arriba, sección 3) — con `alter table ... add
@@ -514,6 +524,18 @@ for all
 using (bucket_id = 'documentos-pdf' and es_personal())
 with check (bucket_id = 'documentos-pdf' and es_personal());
 
+-- Permiso de conducir / ficha técnica recogidos en el check-in (documentos
+-- internos del taller, igual que fotos-vehiculos/firmas/documentos-pdf).
+insert into storage.buckets (id, name, public)
+values ('documentos-cliente', 'documentos-cliente', true)
+on conflict (id) do nothing;
+drop policy if exists "Personal Storage documentos-cliente" on storage.objects;
+create policy "Personal Storage documentos-cliente"
+on storage.objects
+for all
+using (bucket_id = 'documentos-cliente' and es_personal())
+with check (bucket_id = 'documentos-cliente' and es_personal());
+
 -- Las fotos de inventario se pueden VER por cualquier personal, pero solo
 -- el encargado puede subir/reemplazar/borrar (igual que con las tablas).
 drop policy if exists "Personal Storage inventario-imagenes" on storage.objects;
@@ -621,6 +643,45 @@ grant execute on function registrar_pieza_usada(uuid, uuid, int) to authenticate
 grant execute on function quitar_pieza_usada(uuid) to authenticated;
 grant execute on function es_personal() to authenticated;
 grant execute on function es_encargado() to authenticated;
+
+-- Cancelar una orden devuelve al stock, en una sola operación atómica,
+-- todas las piezas que se hubieran registrado como usadas en ella (antes
+-- se quedaban descontadas del inventario para siempre aunque el trabajo no
+-- llegara a completarse). `security definer` por el mismo motivo que
+-- registrar_pieza_usada/quitar_pieza_usada de arriba.
+create or replace function cancelar_orden_devolviendo_stock(
+  p_orden_id uuid,
+  p_motivo text
+)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_pieza record;
+begin
+  if not es_personal() then
+    raise exception 'No autorizado';
+  end if;
+
+  for v_pieza in
+    select id, item_id, cantidad from piezas_usadas where orden_id = p_orden_id
+  loop
+    if v_pieza.item_id is not null then
+      update inventario_items
+      set cantidad = cantidad + v_pieza.cantidad
+      where id = v_pieza.item_id;
+    end if;
+    delete from piezas_usadas where id = v_pieza.id;
+  end loop;
+
+  update ordenes_trabajo
+  set estado = 'cancelado', motivo_cancelacion = p_motivo
+  where id = p_orden_id;
+end;
+$$;
+
+grant execute on function cancelar_orden_devolviendo_stock(uuid, text) to authenticated;
 
 -- =============================================================
 -- Datos de prueba (seed) — opcional, útil para probar el formulario

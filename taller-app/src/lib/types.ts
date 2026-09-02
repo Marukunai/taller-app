@@ -26,7 +26,7 @@ export interface DanoMarcador {
 
 export type NivelCombustible = '1/4' | '1/2' | '3/4' | 'Lleno';
 
-export type TipoServicio = 'mantenimiento' | 'neumaticos' | 'averia';
+export type TipoServicio = 'mantenimiento' | 'neumaticos' | 'averia' | 'pre_itv';
 
 export type EstadoOrden =
   | 'solicitado'
@@ -118,6 +118,12 @@ export interface InspeccionEntrada {
   observaciones: string | null;
   firma_cliente_url: string;
   pdf_informe_url: string | null;
+  // Documentación del conductor/vehículo recogida en el check-in — se exige
+  // AL MENOS una de las dos (ver validación en InspectionForm.tsx), nunca
+  // las dos obligatoriamente: quien trae el coche puede aportar su propio
+  // permiso de conducir (foto) o la ficha técnica del vehículo.
+  permiso_conducir_url: string | null;
+  ficha_tecnica_url: string | null;
 }
 
 /** Un almacén/inventario físico del taller. La mayoría de talleres tienen
@@ -171,6 +177,9 @@ export interface CocheRepuesto {
   modelo: string | null;
   notas: string | null;
   baja: boolean;
+  // Precio por hora de uso (opcional) — para poder cobrar el préstamo del
+  // coche de sustitución si el taller así lo decide. Null = no se cobra.
+  precio_hora: number | null;
 }
 
 /** Rol de una cuenta de Supabase Auth: 'encargado' gestiona el taller

@@ -9,6 +9,7 @@ const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
   mantenimiento: 'Mantenimiento',
   neumaticos: 'Neumáticos',
   averia: 'Avería',
+  pre_itv: 'Pre ITV',
 };
 
 const styles = StyleSheet.create({

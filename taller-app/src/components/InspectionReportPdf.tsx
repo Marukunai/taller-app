@@ -11,6 +11,7 @@ const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
   mantenimiento: 'Mantenimiento',
   neumaticos: 'Neumáticos',
   averia: 'Avería',
+  pre_itv: 'Pre ITV',
 };
 
 const ETIQUETAS_DANO: Record<DanoMarcador['tipo'], string> = {

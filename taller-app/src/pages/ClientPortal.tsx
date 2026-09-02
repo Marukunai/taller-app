@@ -32,6 +32,7 @@ const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
   { value: 'mantenimiento', label: 'Mantenimiento' },
   { value: 'neumaticos', label: 'Neumáticos' },
   { value: 'averia', label: 'Avería' },
+  { value: 'pre_itv', label: 'Pre ITV' },
 ];
 
 const OPCIONES_NEUMATICOS: { value: NeumaticosCantidad; label: string }[] = [
@@ -188,8 +189,12 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setEnviando(true);
     setError(null);
+    if (!form.matricula.trim() || !form.telefono.trim()) {
+      setError('La matrícula y el teléfono de contacto son obligatorios.');
+      return;
+    }
+    setEnviando(true);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -298,19 +303,25 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Matrícula</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Matrícula <span className="text-red-500">*</span>
+                </label>
                 <input
                   value={form.matricula}
                   onChange={(e) => setForm((p) => ({ ...p, matricula: e.target.value }))}
+                  required
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   placeholder="Ej. 1234BBB"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Teléfono de contacto</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Teléfono de contacto <span className="text-red-500">*</span>
+                </label>
                 <input
                   value={form.telefono}
                   onChange={(e) => setForm((p) => ({ ...p, telefono: e.target.value }))}
+                  required
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
               </div>

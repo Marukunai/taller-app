@@ -31,6 +31,7 @@ const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
   { value: 'mantenimiento', label: 'Mantenimiento' },
   { value: 'neumaticos', label: 'Neumáticos' },
   { value: 'averia', label: 'Avería' },
+  { value: 'pre_itv', label: 'Pre ITV' },
 ];
 
 const OPCIONES_NEUMATICOS: { value: NeumaticosCantidad; label: string }[] = [
@@ -81,6 +82,15 @@ export default function InspectionForm({
   const [neumaticosCantidad, setNeumaticosCantidad] = useState<NeumaticosCantidad>('las_4');
   const [neumaticoFoto, setNeumaticoFoto] = useState<File | null>(null);
   const [neumaticoFotoPreview, setNeumaticoFotoPreview] = useState<string | null>(null);
+
+  // Documentación obligatoria del check-in — se exige AL MENOS una de las
+  // dos (validar() más abajo), nunca las dos a la vez: quien trae el coche
+  // puede aportar su propio permiso de conducir (foto) o la ficha técnica
+  // del vehículo, lo que tenga a mano en ese momento.
+  const [permisoConducirFoto, setPermisoConducirFoto] = useState<File | null>(null);
+  const [permisoConducirPreview, setPermisoConducirPreview] = useState<string | null>(null);
+  const [fichaTecnicaFoto, setFichaTecnicaFoto] = useState<File | null>(null);
+  const [fichaTecnicaPreview, setFichaTecnicaPreview] = useState<string | null>(null);
 
   // Datos de la inspección
   const [kilometraje, setKilometraje] = useState('');
@@ -142,6 +152,22 @@ export default function InspectionForm({
     e.target.value = '';
   };
 
+  const handlePermisoConducirSeleccionado = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPermisoConducirFoto(file);
+    setPermisoConducirPreview(URL.createObjectURL(file));
+    e.target.value = '';
+  };
+
+  const handleFichaTecnicaSeleccionada = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFichaTecnicaFoto(file);
+    setFichaTecnicaPreview(URL.createObjectURL(file));
+    e.target.value = '';
+  };
+
   const resetFormulario = () => {
     setNombre('');
     setDni('');
@@ -156,6 +182,10 @@ export default function InspectionForm({
     setNeumaticosCantidad('las_4');
     setNeumaticoFoto(null);
     setNeumaticoFotoPreview(null);
+    setPermisoConducirFoto(null);
+    setPermisoConducirPreview(null);
+    setFichaTecnicaFoto(null);
+    setFichaTecnicaPreview(null);
     setKilometraje('');
     setNivelCombustible('1/2');
     setFotos([]);
@@ -168,10 +198,16 @@ export default function InspectionForm({
     if (!nombre.trim() || !dni.trim() || !telefono.trim()) {
       return 'Completa nombre, DNI y teléfono del cliente.';
     }
+    if (!email.trim()) return 'El email del cliente es obligatorio.';
     if (!matricula.trim()) return 'La matrícula del vehículo es obligatoria.';
     if (!marca.trim() || !modelo.trim()) return 'La marca y el modelo del vehículo son obligatorios.';
     if (!kilometraje.trim() || Number.isNaN(Number(kilometraje))) {
       return 'Indica un kilometraje válido.';
+    }
+    // Se exige AL MENOS uno de los dos documentos (no los dos a la vez) —
+    // ver comentario junto a los estados permisoConducirFoto/fichaTecnicaFoto.
+    if (!permisoConducirFoto && !fichaTecnicaFoto) {
+      return 'Adjunta el permiso de conducir o la ficha técnica del vehículo (al menos uno de los dos).';
     }
     if (!firmaUrl) return 'Es necesario recoger la firma del cliente antes de guardar.';
     return null;
@@ -259,6 +295,35 @@ export default function InspectionForm({
         : await supabase.from('ordenes_trabajo').insert(datosOrden).select().single();
       if (ordenError) throw ordenError;
 
+      // 4b. Permiso de conducir / ficha técnica (bucket propio, distinto de
+      // fotos-vehiculos, para no mezclar documentación del cliente con las
+      // fotos del propio coche) — se sube lo que se haya aportado (al menos
+      // uno de los dos, validado en validar()).
+      let permisoConducirUrl: string | null = null;
+      if (permisoConducirFoto) {
+        const ruta = `${matricula}/permiso-conducir-${crypto.randomUUID()}-${permisoConducirFoto.name}`;
+        const { error: subidaError } = await supabase.storage
+          .from(BUCKETS.documentosCliente)
+          .upload(ruta, permisoConducirFoto, { upsert: true });
+        if (subidaError) throw subidaError;
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from(BUCKETS.documentosCliente).getPublicUrl(ruta);
+        permisoConducirUrl = publicUrl;
+      }
+      let fichaTecnicaUrl: string | null = null;
+      if (fichaTecnicaFoto) {
+        const ruta = `${matricula}/ficha-tecnica-${crypto.randomUUID()}-${fichaTecnicaFoto.name}`;
+        const { error: subidaError } = await supabase.storage
+          .from(BUCKETS.documentosCliente)
+          .upload(ruta, fichaTecnicaFoto, { upsert: true });
+        if (subidaError) throw subidaError;
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from(BUCKETS.documentosCliente).getPublicUrl(ruta);
+        fichaTecnicaUrl = publicUrl;
+      }
+
       // 5. Subida de fotos al bucket 'fotos-vehiculos'
       const fotosUrls: string[] = [];
       for (const foto of fotos) {
@@ -285,6 +350,8 @@ export default function InspectionForm({
           daños_coordenadas: danos,
           observaciones: observaciones || null,
           firma_cliente_url: firmaUrl,
+          permiso_conducir_url: permisoConducirUrl,
+          ficha_tecnica_url: fichaTecnicaUrl,
         })
         .select()
         .single();
@@ -379,7 +446,7 @@ export default function InspectionForm({
             <Campo label="Nombre completo" value={nombre} onChange={setNombre} required />
             <Campo label="DNI" value={dni} onChange={setDni} required />
             <Campo label="Teléfono" value={telefono} onChange={setTelefono} required />
-            <Campo label="Email" value={email} onChange={setEmail} type="email" />
+            <Campo label="Email" value={email} onChange={setEmail} type="email" required />
           </div>
         </Seccion>
 
@@ -466,6 +533,66 @@ export default function InspectionForm({
               </div>
             </div>
           )}
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+            <p className="mb-1 text-sm font-medium text-gray-700">
+              Documentación <span className="text-red-500">*</span>
+            </p>
+            <p className="mb-3 text-xs text-gray-400">
+              Obligatorio adjuntar al menos uno de los dos: el permiso de conducir de quien trae el
+              vehículo, o la ficha técnica del vehículo.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Permiso de conducir (A1, A2, B, B+E...)
+                </label>
+                <div className="flex items-center gap-3">
+                  {permisoConducirPreview && (
+                    <img
+                      src={permisoConducirPreview}
+                      alt=""
+                      className="h-14 w-14 rounded-lg border border-gray-200 object-cover"
+                    />
+                  )}
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-2 text-sm text-slate-600 hover:border-slate-400">
+                    <Camera className="h-4 w-4" />
+                    {permisoConducirPreview ? 'Cambiar foto' : 'Añadir foto'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePermisoConducirSeleccionado}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Ficha técnica del vehículo</label>
+                <div className="flex items-center gap-3">
+                  {fichaTecnicaPreview && (
+                    <img
+                      src={fichaTecnicaPreview}
+                      alt=""
+                      className="h-14 w-14 rounded-lg border border-gray-200 object-cover"
+                    />
+                  )}
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-2 text-sm text-slate-600 hover:border-slate-400">
+                    <Camera className="h-4 w-4" />
+                    {fichaTecnicaPreview ? 'Cambiar foto' : 'Añadir foto'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleFichaTecnicaSeleccionada}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
         </Seccion>
 
         <Seccion titulo="Inspección de entrada" icono={<Camera className="h-4 w-4" />} color="amber">

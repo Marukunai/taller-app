@@ -15,8 +15,13 @@ interface CancelarOrdenModalProps {
 
 /**
  * Cancela una orden de trabajo (p. ej. el cliente cambia de idea). Por
- * decisión del usuario, cancelar NO borra nada: la orden pasa a estado
- * "Cancelado" con un motivo opcional, y queda en el histórico.
+ * decisión del usuario, cancelar NO borra la orden: pasa a estado
+ * "Cancelado" con un motivo opcional, y queda en el histórico. Lo que SÍ
+ * hace automáticamente (vía la función SQL `cancelar_orden_devolviendo_
+ * stock`, en una sola operación atómica) es devolver al inventario
+ * cualquier pieza que se hubiera registrado como usada en esta orden — si
+ * el trabajo no llega a completarse, esas piezas nunca se llegaron a
+ * consumir de verdad.
  */
 export default function CancelarOrdenModal({
   open,
@@ -41,13 +46,13 @@ export default function CancelarOrdenModal({
     e.preventDefault();
     setGuardando(true);
     setError(null);
-    const { error: updateError } = await supabase
-      .from('ordenes_trabajo')
-      .update({ estado: 'cancelado', motivo_cancelacion: motivo.trim() || null })
-      .eq('id', ordenId);
+    const { error: rpcError } = await supabase.rpc('cancelar_orden_devolviendo_stock', {
+      p_orden_id: ordenId,
+      p_motivo: motivo.trim() || null,
+    });
     setGuardando(false);
-    if (updateError) {
-      setError(updateError.message);
+    if (rpcError) {
+      setError(rpcError.message);
       return;
     }
     onCancelada(motivo.trim() || null);
@@ -81,7 +86,9 @@ export default function CancelarOrdenModal({
 
         <form onSubmit={confirmarCancelacion} className="space-y-4">
           <p className="text-sm text-gray-500">
-            La orden pasará a estado "Cancelado" — no se borra nada, queda en el histórico.
+            La orden pasará a estado "Cancelado" — no se borra nada, queda en el histórico. Si
+            tenía piezas del inventario registradas como usadas, se devuelven automáticamente al
+            stock.
           </p>
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Motivo (opcional)</label>

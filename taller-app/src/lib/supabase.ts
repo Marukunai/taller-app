@@ -19,4 +19,5 @@ export const BUCKETS = {
   firmas: 'firmas',
   documentosPdf: 'documentos-pdf',
   inventarioImagenes: 'inventario-imagenes',
+  documentosCliente: 'documentos-cliente',
 } as const;

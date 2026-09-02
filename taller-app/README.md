@@ -32,8 +32,10 @@ cuentas de mecánico.
    - `fotos-vehiculos`
    - `firmas`
    - `documentos-pdf`
-   El cuarto bucket (`inventario-imagenes`, para las fotos del inventario)
-   no hace falta crearlo a mano: lo crea el propio `schema.sql` por SQL.
+   El cuarto y quinto bucket (`inventario-imagenes`, para las fotos del
+   inventario, y `documentos-cliente`, para el permiso de conducir/ficha
+   técnica del check-in) no hace falta crearlos a mano: los crea el propio
+   `schema.sql` por SQL.
 3. Ve a **Authentication → Users → Add user** y crea el usuario (email +
    contraseña) con el que el **encargado** iniciará sesión en la app por
    primera vez — el resto de cuentas del taller (mecánicos) se crean después
@@ -107,6 +109,14 @@ cuentas de mecánico.
 > cantidades decimales en inventario/piezas usadas y la pestaña "Solicitud
 > de cita" (secciones 8 y 31), ejecuta
 > [`supabase/checkin_split_y_decimales_migration.sql`](./supabase/checkin_split_y_decimales_migration.sql).
+> También idempotente.
+>
+> Si tu proyecto ya tiene aplicado todo lo anterior y solo quieres añadir
+> el precio por hora de los coches de sustitución, la documentación
+> obligatoria del check-in (permiso de conducir/ficha técnica) y que
+> cancelar una orden devuelva las piezas al stock (secciones 6, 10 y 24),
+> ejecuta
+> [`supabase/batch18_migration.sql`](./supabase/batch18_migration.sql).
 > También idempotente.
 >
 > Si prefieres borrar todos los datos de prueba y empezar de cero en vez
@@ -191,6 +201,7 @@ supabase/
   solicitud_a_orden_migration.sql  # migración incremental: solicitud aceptada → orden "Solicitado"
   checkin_split_y_decimales_migration.sql # migración incremental: cantidades decimales + Solicitud de cita del personal
   coches_repuesto_migration.sql    # migración incremental: flota de coches de sustitución
+  batch18_migration.sql            # migración incremental: precio/hora sustitución, doc. obligatoria check-in, cancelar devuelve stock
   functions/
     enviar-aviso-cliente/         # Edge Function: email real de "vehículo listo"
     crear-cuenta-mecanico/         # Edge Function: alta de cuentas de mecánico desde la app
@@ -205,8 +216,15 @@ supabase/
 > taller. Se puede seguir haciendo un check-in completo de un tirón (sin
 > pasar por una solicitud previa) exactamente igual que antes.
 
-1. Se rellenan los datos del cliente y del vehículo — matrícula, marca y
-   modelo son obligatorios (no se puede guardar la inspección sin ellos).
+1. Se rellenan los datos del cliente y del vehículo — matrícula, marca,
+   modelo, teléfono y **email** son obligatorios (no se puede guardar la
+   inspección sin ellos). El tipo de servicio incluye ahora también
+   **Pre ITV**, además de Mantenimiento/Neumáticos/Avería.
+1b. Es obligatorio adjuntar (foto) **al menos uno** de estos dos
+   documentos — nunca los dos a la vez: el permiso de conducir (A1, A2, B,
+   B+E...) de quien trae el vehículo, o la ficha técnica del vehículo. Se
+   suben al bucket `documentos-cliente` y quedan enlazados en
+   `inspecciones_entrada` (`permiso_conducir_url`/`ficha_tecnica_url`).
 2. Se registran kilometraje, nivel de combustible y fotos del estado actual.
 3. Si el tipo de servicio es **Neumáticos**, aparecen dos campos adicionales:
    cuántos neumáticos se van a tocar (2 delanteros, 2 traseros, los 4, o uno
@@ -257,7 +275,12 @@ independientes, cada una con su propio stock.
 Un reset de datos de clientes (`reset_database.sql`) no toca los almacenes
 ni el inventario — es un catálogo propio del taller, no un dato de prueba.
 
-Esta pestaña **solo la ve el encargado** — ver sección 12.
+Esta pestaña la ve **todo el personal**, pero en modo distinto según el rol
+(ver sección 12): el encargado puede añadir/editar/borrar items y almacenes
+y ajustar cantidades; un mecánico solo puede **consultar** el stock
+disponible (búsqueda, filtro por almacén, cantidad actual) — sin botones de
+añadir/editar/+−/borrar ni acceso a ningún precio, exactamente igual que ya
+imponía la RLS de Supabase para escritura.
 
 ## 8. Piezas usadas en una reparación (consumo de stock)
 
@@ -322,7 +345,11 @@ gestión (en cualquier estado salvo "Entregado" o ya "Cancelado") tiene un
 botón discreto **"Cancelar orden"**. Al confirmar, la orden pasa a un nuevo
 estado **"Cancelado"** con un motivo opcional de texto libre — no se borra
 nada, queda en el histórico junto al resto de columnas del tablero, y se
-puede consultar el motivo directamente en la tarjeta.
+puede consultar el motivo directamente en la tarjeta. Si la orden tenía
+piezas del inventario registradas como usadas (sección 8), se devuelven
+automáticamente al stock en la misma operación (función SQL
+`cancelar_orden_devolviendo_stock`) — si el trabajo no llega a completarse,
+esas piezas nunca se llegaron a consumir de verdad.
 
 ## 11. Informe de entrega (PDF de salida)
 
@@ -665,10 +692,13 @@ Pestaña **"Flota"**, visible solo para el encargado, para gestionar los
 coches propios del taller que se prestan a un cliente mientras dura el
 servicio del suyo. Es un catálogo propio (como los almacenes de
 Inventario), independiente de clientes/vehículos: se puede dar de alta un
-coche (matrícula, marca, modelo y notas opcionales), editarlo, y **dar de
-baja** uno que deje de estar disponible (por ejemplo, se vendió) sin
-borrarlo — así no se pierde el histórico de préstamos que lo referencian;
-un coche dado de baja se puede reactivar en cualquier momento.
+coche (matrícula, marca, modelo, un **precio por hora** opcional y notas),
+editarlo, y **dar de baja** uno que deje de estar disponible (por ejemplo,
+se vendió) sin borrarlo — así no se pierde el histórico de préstamos que lo
+referencian; un coche dado de baja se puede reactivar en cualquier momento.
+El precio por hora (`coches_repuesto.precio_hora`, null = no se cobra) es
+solo informativo por ahora — de cara al futuro, para poder facturar el
+préstamo si el taller decide cobrarlo.
 
 La disponibilidad de cada coche (**Libre** o **Prestado**, con la
 matrícula del cliente y la fecha desde la que lo tiene) no se guarda a
@@ -812,3 +842,33 @@ Supabase Realtime.
 - Historial de kilometraje real por vehículo (por ejemplo, pidiéndolo en
   cada visita) para que "Próximas revisiones" deje de depender de una
   estimación.
+- Roles nuevos **admin** (cuenta de arranque, crea al primer "dueño") y
+  **dueño** (crea encargados y gestiona todo), y un rol **recepcionista**
+  (sin acceso a Agenda ni a Próximas revisiones) — solo admin/dueño podrían
+  desactivar, eliminar o modificar otras cuentas; cada usuario podría
+  seguir editando su propio nombre/email/contraseña como hasta ahora.
+- Agenda en vista mensual tipo calendario con un color por día (verde =
+  libre, naranja = algunas horas libres, rojo = día ocupado), en vez de la
+  lista cronológica actual (sección 26).
+- Al aceptar una "Solicitud de cita" (sección 30), un botón para añadirla a
+  la Agenda automáticamente con el horario propuesto — con la última
+  palabra siempre del mecánico/encargado antes de confirmarlo.
+- Préstamo de coche de sustitución: mostrar en la propia asignación el día
+  y hora previstos de devolución y el nombre del cliente (hoy solo se ve la
+  matrícula y desde cuándo), restringir quién puede prestar uno a
+  dueño/encargado, y un botón para "enlazar" el coche de sustitución
+  directamente a la orden de reparación del vehículo que lo pide desde la
+  propia Flota (sección 24).
+- Aviso automático anual (opcional, con un botón de aceptar junto a la
+  firma de salida) para que el cliente reciba un recordatorio de revisión
+  un año después de pasar por el taller.
+- Datalist con fabricantes y modelos de vehículo reales (dependiente del
+  fabricante elegido), tipo de combustible, año del modelo y prestaciones
+  del motor — manteniendo marca/modelo como campos obligatorios y dejando
+  siempre la opción de escribir un valor que no esté en la lista.
+- Selector de medida de neumático por datalist (ancho/perfil/llanta/índice
+  de carga/índice de velocidad/estación), además de la foto actual, al
+  estilo de buscadores de neumáticos como el de Vulco.
+- De cara a más adelante: modelo de suscripción por mensualidad, y qué
+  implicaría dar servicio a varios talleres distintos desde la misma app
+  (aislar la base de datos de cada uno).
