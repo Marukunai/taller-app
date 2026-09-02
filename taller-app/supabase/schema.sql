@@ -118,30 +118,46 @@ create table if not exists piezas_usadas (
 
 -- 7. TABLA DE PERFILES (rol de cada cuenta de Supabase Auth)
 -- Todo el mundo con sesión iniciada es un usuario de Supabase Auth, pero
--- puede ser una de tres cosas muy distintas: 'encargado' (gestiona el
--- taller: inventario, personal y todo lo demás), 'mecanico' (personal del
--- taller pero SIN acceso a Inventario ni a Gestión de personal, ni a
--- ningún dato de precios/costes que pueda añadirse en el futuro), o
--- 'cliente' (una cuenta que el propio cliente se crea desde el Portal de
--- cliente para pedir cita sin pasar por el mecánico). Sin esta distinción,
--- cualquier cliente con sesión iniciada tendría acceso total a los datos
--- de TODOS los clientes y al inventario — por eso las políticas de abajo ya
--- no usan solo "auth.role() = 'authenticated'", sino "es_personal()" (o
--- "es_encargado()" para lo que solo puede tocar el encargado).
+-- puede ser una de varias cosas muy distintas. Desde el batch 19, jerarquía
+-- de personal: 'admin' (cuenta de arranque, se crea solo por SQL directo,
+-- únicamente para crear al primer 'dueno' — no ve nada más de la app),
+-- 'dueno' (gestiona el taller entero, incluida Gestión de personal
+-- completa: crear/editar/desactivar/eliminar CUALQUIER cuenta), 'encargado'
+-- (mismo acceso operativo que antes — inventario, precios, presupuestos,
+-- flota, estadísticas — pero YA NO ve Gestión de personal), 'mecanico'
+-- (check-in/panel/entrega/inventario en solo lectura, SIN precios/costes,
+-- SIN Gestión de personal, SIN Flota/Estadísticas/Próximas revisiones),
+-- 'recepcionista' (solicitud de cita/agenda/panel de gestión de cara al
+-- cliente, SIN inventario, SIN próximas revisiones), o 'cliente' (una
+-- cuenta que el propio cliente se crea desde el Portal de cliente para
+-- pedir cita sin pasar por el mecánico). Sin esta distinción, cualquier
+-- cliente con sesión iniciada tendría acceso total a los datos de TODOS los
+-- clientes y al inventario — por eso las políticas de abajo ya no usan solo
+-- "auth.role() = 'authenticated'", sino "es_personal()" (nivel lectura,
+-- cualquier rol de personal), "es_encargado()" (nivel gestión operativa:
+-- admin/dueno/encargado) o "es_gestion_cuentas()" (nivel cuentas: solo
+-- admin/dueno).
 create table if not exists perfiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  rol text not null default 'cliente' check (rol in ('encargado', 'mecanico', 'cliente')),
+  rol text not null default 'cliente'
+    check (rol in ('admin', 'dueno', 'encargado', 'mecanico', 'recepcionista', 'cliente')),
   nombre text,
   email text,
   -- Cuenta de personal desactivada desde "Gestión de personal" (p. ej. un
   -- mecánico que ya no trabaja en el taller) — no se borra nada, solo deja
-  -- de contar como personal a efectos de es_personal()/es_encargado() de
-  -- abajo, y se le bloquea el login (ban_duration) desde la Edge Function
-  -- administrar-cuenta-personal. Siempre true para cuentas de cliente.
+  -- de contar como personal a efectos de es_personal()/es_encargado()/
+  -- es_gestion_cuentas() de abajo, y se le bloquea el login (ban_duration)
+  -- desde la Edge Function administrar-cuenta-personal. Siempre true para
+  -- cuentas de cliente.
   activo boolean not null default true,
   created_at timestamp with time zone default now()
 );
 alter table perfiles add column if not exists activo boolean not null default true;
+-- Instalación ya existente (de antes del batch 19): amplía el check
+-- constraint del rol para admitir los roles nuevos sin perder los datos.
+alter table perfiles drop constraint if exists perfiles_rol_check;
+alter table perfiles add constraint perfiles_rol_check
+  check (rol in ('admin', 'dueno', 'encargado', 'mecanico', 'recepcionista', 'cliente'));
 
 -- Se crea automáticamente un perfil (por defecto 'cliente') cada vez que
 -- se registra una cuenta nueva en Supabase Auth — así el Portal de cliente
@@ -165,26 +181,28 @@ create trigger on_auth_user_created
   for each row execute function handle_new_user();
 
 -- Si ya tenías cuentas de personal creadas ANTES de ejecutar esto (el
--- trigger de arriba solo actúa en registros nuevos), se les da rol
--- 'encargado' automáticamente aquí, asumiendo que toda cuenta que existiera
--- ya en tu proyecto es del personal del taller (el Portal de cliente es
--- nuevo, así que a fecha de hoy no puede haber todavía clientes reales).
--- Se les da 'encargado' (el rol con más permisos) porque son las cuentas
--- que ya usa el taller a diario — los mecánicos con acceso restringido se
--- crean después, uno a uno, desde la pantalla de Gestión de personal.
+-- trigger de arriba solo actúa en registros nuevos), se les da rol 'dueno'
+-- automáticamente aquí, asumiendo que toda cuenta que existiera ya en tu
+-- proyecto es del personal del taller (el Portal de cliente es nuevo, así
+-- que a fecha de hoy no puede haber todavía clientes reales). Se les da
+-- 'dueno' (el rol operativo con más permisos, sin llegar a 'admin', que es
+-- solo de arranque) porque son las cuentas que ya usa el taller a diario —
+-- el resto del personal (encargados, mecánicos, recepcionistas) se crea
+-- después, uno a uno, desde la pantalla de Gestión de personal.
 insert into perfiles (id, rol, nombre, email)
-select id, 'encargado', raw_user_meta_data->>'full_name', email from auth.users
+select id, 'dueno', raw_user_meta_data->>'full_name', email from auth.users
 on conflict (id) do nothing;
 
 -- Funciones auxiliares para las políticas de abajo. `security definer` para
 -- poder leer `perfiles` sin depender de que la propia política de perfiles
 -- se lo permita.
--- ¿La sesión actual es de CUALQUIER personal del taller (encargado o
--- mecánico)? Se usa para lo que ambos roles pueden ver/hacer por igual.
--- Ambas funciones exigen además `activo` — una cuenta de personal
--- desactivada (ver columna de arriba) pierde el acceso al instante en
--- TODAS las políticas de abajo, sin depender de que su sesión/token
--- caduque ni de que el ban de Supabase Auth ya haya surtido efecto.
+-- ¿La sesión actual es de CUALQUIER personal del taller (admin, dueño,
+-- encargado, mecánico o recepcionista)? Se usa para lo que todos esos
+-- roles pueden ver/hacer por igual (nivel lectura). Las cuatro funciones
+-- exigen además `activo` — una cuenta de personal desactivada (ver columna
+-- de arriba) pierde el acceso al instante en TODAS las políticas de abajo,
+-- sin depender de que su sesión/token caduque ni de que el ban de Supabase
+-- Auth ya haya surtido efecto.
 create or replace function es_personal()
 returns boolean
 language sql
@@ -192,13 +210,18 @@ security definer set search_path = public
 stable
 as $$
   select exists (
-    select 1 from perfiles where id = auth.uid() and rol in ('encargado', 'mecanico') and activo
+    select 1 from perfiles
+    where id = auth.uid()
+      and rol in ('admin', 'dueno', 'encargado', 'mecanico', 'recepcionista')
+      and activo
   );
 $$;
 
--- ¿La sesión actual es del ENCARGADO? Se usa para lo que un mecánico no
--- debe poder hacer: gestionar el inventario/almacenes, crear/gestionar
--- cuentas de personal, o (en el futuro) ver precios/costes.
+-- ¿La sesión actual tiene nivel de gestión OPERATIVA (admin, dueño o
+-- encargado)? Se usa para lo que un mecánico/recepcionista no debe poder
+-- hacer: gestionar el inventario/almacenes, ver precios/costes,
+-- presupuestos o la flota de sustitución. Desde el batch 19 YA NO incluye
+-- la gestión de CUENTAS de personal — ver es_gestion_cuentas() debajo.
 create or replace function es_encargado()
 returns boolean
 language sql
@@ -206,7 +229,43 @@ security definer set search_path = public
 stable
 as $$
   select exists (
-    select 1 from perfiles where id = auth.uid() and rol = 'encargado' and activo
+    select 1 from perfiles
+    where id = auth.uid() and rol in ('admin', 'dueno', 'encargado') and activo
+  );
+$$;
+
+-- ¿La sesión actual puede gestionar CUENTAS de personal (crear, editar el
+-- rol de otra cuenta, desactivar, reactivar o eliminar)? Desde el batch 19,
+-- SOLO admin/dueño — un encargado ya no puede (antes sí podía, cuando
+-- 'encargado' era el rol con más permisos). Se usa sobre todo desde las
+-- Edge Functions (crear-cuenta-personal / administrar-cuenta-personal, que
+-- hacen su propia comprobación de rol con el token de quien llama), no
+-- tanto en políticas RLS de tablas — se deja aquí como función de apoyo
+-- reutilizable y por si se necesita en el futuro.
+create or replace function es_gestion_cuentas()
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from perfiles where id = auth.uid() and rol in ('admin', 'dueno') and activo
+  );
+$$;
+
+-- ¿La sesión actual es la cuenta de arranque 'admin'? Uso muy puntual (en
+-- la práctica, casi todo lo que necesita "nivel admin" ya lo cubre
+-- es_gestion_cuentas() admitiendo también 'dueno') — se deja definida por
+-- si hiciera falta distinguir el caso "solo admin" en el futuro (p. ej. de
+-- cara al planteamiento de multi-taller).
+create or replace function es_admin()
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from perfiles where id = auth.uid() and rol = 'admin' and activo
   );
 $$;
 
@@ -396,6 +455,36 @@ create policy "Ver propio perfil o ser personal" on perfiles
   for select using (auth.uid() = id or es_personal());
 create policy "Editar propio perfil" on perfiles
   for update using (auth.uid() = id) with check (auth.uid() = id);
+
+-- IMPORTANTE (batch 19): la política de arriba deja que CUALQUIER cuenta
+-- edite su PROPIA fila de `perfiles` (necesario para que el autoservicio de
+-- nombre/email funcione) — pero RLS solo restringe QUÉ FILAS se pueden
+-- tocar, no QUÉ COLUMNAS, así que sin este trigger cualquier cuenta
+-- (mecánico, recepcionista, cliente...) podría auto-ascenderse a 'dueno' o
+-- incluso 'admin' con un simple `update` directo a la tabla, saltándose
+-- por completo la Edge Function administrar-cuenta-personal y su
+-- comprobación de "solo admin/dueño pueden cambiar el rol de una cuenta".
+-- Este trigger bloquea cualquier cambio a `rol`/`activo` que NO venga de la
+-- clave service_role (que es la que usan las Edge Functions tras haber
+-- comprobado ya, en su propio código, que quien llama tiene permiso).
+create or replace function bloquear_cambio_rol_propio()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if (new.rol is distinct from old.rol or new.activo is distinct from old.activo)
+     and coalesce(auth.role(), '') <> 'service_role' then
+    raise exception 'Solo un dueño o administrador puede cambiar el rol o el estado de una cuenta.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_bloquear_cambio_rol_propio on perfiles;
+create trigger trg_bloquear_cambio_rol_propio
+  before update on perfiles
+  for each row execute function bloquear_cambio_rol_propio();
 
 alter table solicitudes enable row level security;
 -- El cliente crea y ve sus propias solicitudes; el personal las ve todas.
@@ -643,6 +732,8 @@ grant execute on function registrar_pieza_usada(uuid, uuid, int) to authenticate
 grant execute on function quitar_pieza_usada(uuid) to authenticated;
 grant execute on function es_personal() to authenticated;
 grant execute on function es_encargado() to authenticated;
+grant execute on function es_gestion_cuentas() to authenticated;
+grant execute on function es_admin() to authenticated;
 
 -- Cancelar una orden devuelve al stock, en una sola operación atómica,
 -- todas las piezas que se hubieran registrado como usadas en ella (antes

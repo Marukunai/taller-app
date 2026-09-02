@@ -1,9 +1,13 @@
 // =============================================================
 // Taller App · Edge Function: administrar una cuenta de personal
-// existente (encargado o mecánico) — editar, desactivar, reactivar o
-// eliminar.
+// existente (dueño, encargado, mecánico o recepcionista) — editar,
+// desactivar, reactivar o eliminar. Desde el batch 19 también sirve para el
+// autoservicio "editar mis datos" (nombre/email) de CUALQUIER cuenta de
+// personal sobre sí misma, incluida 'admin'.
 //
-// Se invoca desde "Gestión de personal" (solo visible para un encargado) —
+// Se invoca desde "Gestión de personal" (solo visible para admin/dueño
+// desde el batch 19) Y desde el menú de cuenta (CuentaMenu.tsx, "Editar mi
+// nombre/email", visible para todo el personal) —
 // supabase.functions.invoke('administrar-cuenta-personal', {body: {accion,
 // cuenta_id, ...}}). Cuatro acciones posibles:
 //   - 'editar':     cambia nombre, email y/o rol de una cuenta existente.
@@ -19,25 +23,34 @@
 // service_role — nunca puede llegar al navegador, así que esta lógica vive
 // en el servidor (aquí). Cambiar el rol es solo una escritura normal en
 // `perfiles`, pero se hace aquí también para mantener todo en un único sitio
-// y una única comprobación de permisos.
+// y una única comprobación de permisos. (Además, desde el batch 19 la RLS
+// de `perfiles` tiene un trigger que bloquea cambios directos de `rol`/
+// `activo` fuera de esta función — ver `bloquear_cambio_rol_propio()` en
+// schema.sql — así que ni siquiera un cliente manipulado a mano podría
+// saltarse esto escribiendo directo en la tabla.)
 //
 // Seguridad:
-// 1) Antes de nada, se comprueba que quien llama es un 'encargado' ACTIVO
-//    (con su propio token de sesión, sin privilegios de admin) — igual que
-//    en `crear-cuenta-mecanico`.
+// 1) Dos niveles de permiso, según la acción:
+//    a) Autoservicio ("editar mis propios datos", SOLO nombre/email, nunca
+//       rol): cualquier cuenta de personal ACTIVA (admin, dueño, encargado,
+//       mecánico o recepcionista) puede hacerlo sobre SÍ MISMA.
+//    b) Gestión de OTRAS cuentas (editar con cambio de rol, desactivar,
+//       reactivar, eliminar): SOLO 'admin' o 'dueno' ACTIVOS — desde el
+//       batch 19 un 'encargado' ya NO puede (antes sí podía).
 // 2) Protección contra "quedarte fuera sin querer": nadie puede
 //    desactivarse, eliminarse o cambiarse el propio rol a sí mismo desde
 //    aquí (si de verdad hace falta, hay que hacerlo desde el dashboard de
-//    Supabase). Como quien actúa siempre sigue siendo encargado después de
-//    la operación, esto garantiza que nunca se pueda llegar a un taller con
-//    CERO encargados por esta vía, sin necesidad de contar cuántos quedan.
-// 3) Solo se permite actuar sobre cuentas de personal (`rol` encargado o
-//    mecánico) — nunca sobre una cuenta de cliente del Portal.
+//    Supabase).
+// 3) Solo se permite actuar sobre cuentas de personal (nunca sobre una
+//    cuenta de cliente del Portal). Una cuenta 'admin' NUNCA puede
+//    gestionarse desde aquí salvo por sí misma (autoservicio de nombre/
+//    email) — ni siquiera un dueño puede desactivar/eliminar/cambiar el rol
+//    de una cuenta admin desde la app; eso solo por SQL directo.
 //
 // DESPLIEGUE (desde tu propio ordenador, con la Supabase CLI instalada):
 //   supabase functions deploy administrar-cuenta-personal
 // No hace falta configurar ningún secreto extra (igual que
-// crear-cuenta-mecanico): SUPABASE_URL, SUPABASE_ANON_KEY y
+// crear-cuenta-personal): SUPABASE_URL, SUPABASE_ANON_KEY y
 // SUPABASE_SERVICE_ROLE_KEY los inyecta Supabase automáticamente.
 // =============================================================
 
@@ -63,7 +76,17 @@ function jsonError(mensaje, status) {
 }
 
 const ACCIONES_VALIDAS = ['editar', 'desactivar', 'reactivar', 'eliminar'];
-const ROLES_VALIDOS = ['encargado', 'mecanico'];
+// Roles de personal que existen en la app (incluye 'admin', para que la
+// propia cuenta admin pueda pasar por la comprobación de "cuenta de
+// personal válida" al editarse a sí misma) — nunca 'cliente'.
+const ROLES_PERSONAL = ['admin', 'dueno', 'encargado', 'mecanico', 'recepcionista'];
+// Roles que se pueden ASIGNAR a otra cuenta desde aquí (nunca 'admin' — esa
+// solo se asigna por SQL directo, ver README).
+const ROLES_ASIGNABLES = ['dueno', 'encargado', 'mecanico', 'recepcionista'];
+// Roles con permiso para gestionar OTRAS cuentas (crear ya vive en
+// crear-cuenta-personal; aquí: editar-con-rol, desactivar, reactivar,
+// eliminar).
+const ROLES_GESTION_CUENTAS = ['admin', 'dueno'];
 // "Para siempre" en la práctica (Supabase pide una duración, no acepta
 // "indefinido"): 100 años. `ban_duration: 'none'` es como se revierte.
 const BAN_PERMANENTE = '876000h';
@@ -73,7 +96,7 @@ interface Body {
   cuenta_id: string;
   nombre?: string;
   email?: string;
-  rol?: 'encargado' | 'mecanico';
+  rol?: 'dueno' | 'encargado' | 'mecanico' | 'recepcionista';
 }
 
 serve(async (req) => {
@@ -110,8 +133,12 @@ serve(async (req) => {
       .eq('id', llamante.id)
       .single();
 
-    if (errorPerfil || perfilLlamante?.rol !== 'encargado' || perfilLlamante?.activo === false) {
-      return jsonError('Solo un encargado puede administrar cuentas de personal.', 403);
+    const llamanteActivo = !errorPerfil && perfilLlamante?.activo !== false;
+    const llamanteEsPersonal = llamanteActivo && ROLES_PERSONAL.includes(perfilLlamante?.rol);
+    const llamanteGestionaCuentas = llamanteActivo && ROLES_GESTION_CUENTAS.includes(perfilLlamante?.rol);
+
+    if (!llamanteEsPersonal) {
+      return jsonError('Solo el personal del taller puede usar esta función.', 403);
     }
 
     const { accion, cuenta_id: cuentaId, nombre, email, rol } = (await req.json()) as Body;
@@ -121,6 +148,15 @@ serve(async (req) => {
     }
     if (!cuentaId?.trim()) {
       return jsonError('Falta la cuenta sobre la que actuar.', 400);
+    }
+
+    // Autoservicio: editar SOLO nombre/email de la PROPIA cuenta (nunca el
+    // rol) — permitido a cualquier cuenta de personal activa, no solo a
+    // admin/dueño. Cualquier otra combinación (rol propio, o cualquier
+    // acción sobre OTRA cuenta) exige ser admin/dueño.
+    const esAutoedicionSimple = accion === 'editar' && cuentaId === llamante.id && !rol;
+    if (!esAutoedicionSimple && !llamanteGestionaCuentas) {
+      return jsonError('Solo un dueño o administrador puede gestionar cuentas de personal.', 403);
     }
 
     // Protección contra auto-bloqueo: nadie puede desactivarse, eliminarse
@@ -135,7 +171,7 @@ serve(async (req) => {
     }
 
     // Cliente admin: SOLO a partir de aquí, y solo porque ya se comprobó
-    // arriba que quien llama es un encargado activo.
+    // arriba que la operación está permitida.
     const clienteAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // Solo se puede actuar sobre cuentas de personal (nunca sobre un
@@ -146,15 +182,23 @@ serve(async (req) => {
       .eq('id', cuentaId)
       .maybeSingle();
 
-    if (errorObjetivo || !perfilObjetivo || !ROLES_VALIDOS.includes(perfilObjetivo.rol)) {
+    if (errorObjetivo || !perfilObjetivo || !ROLES_PERSONAL.includes(perfilObjetivo.rol)) {
       return jsonError('Cuenta no encontrada o no es una cuenta de personal.', 404);
+    }
+
+    // Una cuenta 'admin' nunca se gestiona (desactivar/reactivar/eliminar/
+    // cambiar rol) desde aquí, ni siquiera por otro admin/dueño — solo por
+    // SQL directo. Autoeditar nombre/email de una cuenta admin sobre sí
+    // misma SÍ está permitido (ya cubierto por `esAutoedicionSimple` arriba).
+    if (perfilObjetivo.rol === 'admin' && cuentaId !== llamante.id) {
+      return jsonError('Una cuenta admin no se puede gestionar desde aquí.', 403);
     }
 
     if (accion === 'editar') {
       if (!nombre?.trim() && !email?.trim() && !rol) {
         return jsonError('No hay ningún cambio que aplicar.', 400);
       }
-      if (rol && !ROLES_VALIDOS.includes(rol)) {
+      if (rol && !ROLES_ASIGNABLES.includes(rol)) {
         return jsonError('Rol no válido.', 400);
       }
 

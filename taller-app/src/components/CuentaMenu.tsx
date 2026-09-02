@@ -1,20 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { CheckCircle2, ChevronDown, KeyRound, Loader2, LogOut, User } from 'lucide-react';
+import { CheckCircle2, ChevronDown, KeyRound, Loader2, LogOut, Pencil, User } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { RolPerfil } from '../lib/types';
 
 const ETIQUETAS_ROL: Record<RolPerfil, string> = {
+  admin: 'Administrador',
+  dueno: 'Dueño',
   encargado: 'Encargado',
   mecanico: 'Mecánico',
+  recepcionista: 'Recepcionista',
   cliente: 'Cliente',
 };
 
 interface CuentaMenuProps {
+  /** Id de la propia cuenta — hace falta para la Edge Function del
+   *  autoservicio de "Editar mis datos" (nombre/email), que exige que
+   *  `cuenta_id` sea la propia cuenta cuando quien llama no es admin/dueño. */
+  miId: string;
   nombre: string;
   email: string;
   rol: RolPerfil;
   onCerrarSesion: () => void;
+  /** Se llama tras guardar nombre/email con éxito, para que App.tsx
+   *  actualice el `perfil` en memoria sin tener que recargar la página. */
+  onPerfilActualizado: (cambios: { nombre?: string; email?: string }) => void;
 }
 
 /**
@@ -25,7 +35,14 @@ interface CuentaMenuProps {
  * restablecimiento (aquí ya hay una sesión válida, así que
  * `supabase.auth.updateUser` puede cambiarla directamente).
  */
-export default function CuentaMenu({ nombre, email, rol, onCerrarSesion }: CuentaMenuProps) {
+export default function CuentaMenu({
+  miId,
+  nombre,
+  email,
+  rol,
+  onCerrarSesion,
+  onPerfilActualizado,
+}: CuentaMenuProps) {
   const [abierto, setAbierto] = useState(false);
   const [cambiandoPassword, setCambiandoPassword] = useState(false);
   const [passwordNueva, setPasswordNueva] = useState('');
@@ -33,6 +50,15 @@ export default function CuentaMenu({ nombre, email, rol, onCerrarSesion }: Cuent
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
+  // Autoservicio "Editar mis datos" (nombre/email) — todo el personal puede
+  // modificarse a sí mismo (solo nombre, email y contraseña), aunque ya no
+  // tenga acceso a Gestión de personal desde el batch 19.
+  const [editandoDatos, setEditandoDatos] = useState(false);
+  const [nombreNuevo, setNombreNuevo] = useState(nombre);
+  const [emailNuevo, setEmailNuevo] = useState(email);
+  const [guardandoDatos, setGuardandoDatos] = useState(false);
+  const [errorDatos, setErrorDatos] = useState<string | null>(null);
+  const [avisoDatos, setAvisoDatos] = useState<string | null>(null);
   const contenedorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,6 +79,49 @@ export default function CuentaMenu({ nombre, email, rol, onCerrarSesion }: Cuent
     setPasswordConfirmar('');
     setError(null);
     setAviso(null);
+    setEditandoDatos(false);
+    setNombreNuevo(nombre);
+    setEmailNuevo(email);
+    setErrorDatos(null);
+    setAvisoDatos(null);
+  };
+
+  const handleGuardarDatos = async (e: FormEvent) => {
+    e.preventDefault();
+    setErrorDatos(null);
+    setAvisoDatos(null);
+    const nombreLimpio = nombreNuevo.trim();
+    const emailLimpio = emailNuevo.trim();
+    if (!nombreLimpio || !emailLimpio) {
+      setErrorDatos('El nombre y el email no pueden quedar vacíos.');
+      return;
+    }
+    if (nombreLimpio === nombre && emailLimpio === email) {
+      setErrorDatos('No hay ningún cambio que guardar.');
+      return;
+    }
+    setGuardandoDatos(true);
+    const body: Record<string, string> = { accion: 'editar', cuenta_id: miId };
+    if (nombreLimpio !== nombre) body.nombre = nombreLimpio;
+    if (emailLimpio !== email) body.email = emailLimpio;
+    const { data, error: invokeError } = await supabase.functions.invoke('administrar-cuenta-personal', {
+      body,
+    });
+    setGuardandoDatos(false);
+    if (invokeError) {
+      setErrorDatos(
+        `No se pudo guardar: ${invokeError.message}. Puede que la función ` +
+          '"administrar-cuenta-personal" no esté desplegada todavía (ver README).',
+      );
+      return;
+    }
+    const respuesta = data as { ok?: boolean; error?: string } | null;
+    if (respuesta?.error) {
+      setErrorDatos(respuesta.error);
+      return;
+    }
+    setAvisoDatos('Datos actualizados.');
+    onPerfilActualizado({ nombre: nombreLimpio, email: emailLimpio });
   };
 
   const handleCambiarPassword = async (e: FormEvent) => {
@@ -170,6 +239,73 @@ export default function CuentaMenu({ nombre, email, rol, onCerrarSesion }: Cuent
               className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
             >
               <KeyRound className="h-4 w-4 text-gray-400" /> Cambiar mi contraseña
+            </button>
+          )}
+
+          {editandoDatos ? (
+            <form onSubmit={handleGuardarDatos} className="space-y-2.5 border-t border-gray-100 py-2.5">
+              <div className="space-y-1">
+                <label htmlFor="cuenta-nombre-nuevo" className="text-xs font-medium text-gray-700">
+                  Nombre
+                </label>
+                <input
+                  id="cuenta-nombre-nuevo"
+                  required
+                  value={nombreNuevo}
+                  onChange={(e) => setNombreNuevo(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="cuenta-email-nuevo" className="text-xs font-medium text-gray-700">
+                  Email
+                </label>
+                <input
+                  id="cuenta-email-nuevo"
+                  type="email"
+                  required
+                  value={emailNuevo}
+                  onChange={(e) => setEmailNuevo(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+              {errorDatos && <p className="text-xs text-red-600">{errorDatos}</p>}
+              {avisoDatos && (
+                <p className="flex items-center gap-1 text-xs text-emerald-700">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> {avisoDatos}
+                </p>
+              )}
+              <div className="flex gap-2 pt-0.5">
+                <button
+                  type="submit"
+                  disabled={guardandoDatos}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {guardandoDatos && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Guardar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditandoDatos(false);
+                    setNombreNuevo(nombre);
+                    setEmailNuevo(email);
+                    setErrorDatos(null);
+                    setAvisoDatos(null);
+                  }}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditandoDatos(true)}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <Pencil className="h-4 w-4 text-gray-400" /> Editar mi nombre/email
             </button>
           )}
 

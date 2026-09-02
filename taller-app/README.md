@@ -37,12 +37,13 @@ cuentas de mecánico.
    técnica del check-in) no hace falta crearlos a mano: los crea el propio
    `schema.sql` por SQL.
 3. Ve a **Authentication → Users → Add user** y crea el usuario (email +
-   contraseña) con el que el **encargado** iniciará sesión en la app por
-   primera vez — el resto de cuentas del taller (mecánicos) se crean después
-   desde dentro de la propia app, no hace falta darlas de alta a mano aquí
-   (ver sección 13). La app no tiene pantalla de registro público para el
-   personal. (El Portal de cliente, en cambio, sí tiene registro propio —
-   ver sección 14.)
+   contraseña) con el que el **dueño** iniciará sesión en la app por
+   primera vez (`schema.sql` da rol `dueno` a las cuentas de Auth que ya
+   existan al ejecutarlo) — el resto de cuentas del taller (encargados,
+   mecánicos, recepcionistas) se crean después desde dentro de la propia
+   app, no hace falta darlas de alta a mano aquí (ver sección 13). La app no
+   tiene pantalla de registro público para el personal. (El Portal de
+   cliente, en cambio, sí tiene registro propio — ver sección 14.)
 4. Si quieres que el registro del Portal de cliente sea instantáneo (que el
    cliente pueda entrar nada más crear su cuenta, sin pasos intermedios), ve
    a **Authentication → Providers → Email** y desactiva **"Confirm email"**.
@@ -119,6 +120,19 @@ cuentas de mecánico.
 > [`supabase/batch18_migration.sql`](./supabase/batch18_migration.sql).
 > También idempotente.
 >
+> Si tu proyecto ya tiene aplicado todo lo anterior y solo quieres añadir la
+> jerarquía de roles **admin/dueño/encargado/mecánico/recepcionista**
+> (sección 12), ejecuta
+> [`supabase/roles_v2_migration.sql`](./supabase/roles_v2_migration.sql).
+> También idempotente. Convierte automáticamente a **"dueño"** todas las
+> cuentas que ya tuvieran rol `encargado` (es el rol con más permisos hasta
+> ahora, así que hereda el nuevo rol de más permisos operativos). Después de
+> ejecutarla, vuelve a desplegar las Edge Functions
+> `crear-cuenta-personal` y `administrar-cuenta-personal` (la antigua
+> `crear-cuenta-mecanico` ya no la usa la app — puedes borrarla del
+> dashboard si quieres). Si además quieres una cuenta `admin` de arranque,
+> créala a mano por SQL — ver sección 12.
+>
 > Si prefieres borrar todos los datos de prueba y empezar de cero en vez
 > de aplicar migraciones una a una, ejecuta primero
 > [`supabase/reset_database.sql`](./supabase/reset_database.sql) y después
@@ -187,8 +201,8 @@ src/
     InspectionForm.tsx    # paso 2 del check-in: daños, kilometraje y firma con el coche ya presente
     ManagementPanel.tsx     # tablero de órdenes de trabajo por estado
     CheckoutForm.tsx         # entrega del vehículo (segunda firma + informe de salida)
-    InventoryPanel.tsx       # inventario/almacén de repuestos del taller (solo encargado)
-    PersonnelPanel.tsx        # alta, edición, desactivación y borrado de cuentas (solo encargado)
+    InventoryPanel.tsx       # inventario/almacén de repuestos del taller (no recepcionista)
+    PersonnelPanel.tsx        # alta, edición, desactivación y borrado de cuentas (solo dueño/admin)
     HistorialVehiculo.tsx      # historial de un vehículo por matrícula
     ProximasRevisiones.tsx      # lista de vehículos a los que probablemente toca revisión
     ClientPortal.tsx              # portal del cliente (pedir servicio, ver solicitudes)
@@ -202,9 +216,10 @@ supabase/
   checkin_split_y_decimales_migration.sql # migración incremental: cantidades decimales + Solicitud de cita del personal
   coches_repuesto_migration.sql    # migración incremental: flota de coches de sustitución
   batch18_migration.sql            # migración incremental: precio/hora sustitución, doc. obligatoria check-in, cancelar devuelve stock
+  roles_v2_migration.sql           # migración incremental: jerarquía admin/dueño/encargado/mecánico/recepcionista
   functions/
     enviar-aviso-cliente/         # Edge Function: email real de "vehículo listo"
-    crear-cuenta-mecanico/         # Edge Function: alta de cuentas de mecánico desde la app
+    crear-cuenta-personal/         # Edge Function: alta de cuentas de personal (cualquier rol asignable)
     administrar-cuenta-personal/   # Edge Function: editar/desactivar/reactivar/eliminar cuentas
 ```
 
@@ -365,66 +380,89 @@ de entrada. Si la generación del PDF fallara por lo que sea, la entrega
 queda igualmente confirmada — solo se muestra un aviso aparte, nunca bloquea
 el proceso.
 
-## 12. Autenticación y roles (encargado / mecánico / cliente)
+## 12. Autenticación y roles (admin / dueño / encargado / mecánico / recepcionista / cliente)
 
 Toda cuenta con sesión iniciada en Supabase Auth tiene un **rol** guardado
-en la tabla `perfiles`, uno de tres:
+en la tabla `perfiles`. Desde el batch 19 hay seis roles posibles, en
+jerarquía:
 
-- **`encargado`** — acceso completo: Check-in, Panel de gestión, Entrega,
-  Historial, Próximas revisiones, **Inventario** y **Gestión de personal**
-  (sección 13). Es quien da de alta a los mecánicos y quien puede
-  restablecer la contraseña de cualquier cuenta del taller.
+- **`admin`** — cuenta de arranque, **se crea solo por SQL directo** (nunca
+  desde la app, ver sección 2 y el propio `roles_v2_migration.sql`). No ve
+  Check-in, Panel de gestión ni ningún dato de clientes: al iniciar sesión
+  solo ve la pantalla de **Gestión de personal**, para poder crear al
+  primer `dueno` del taller (o uno nuevo si hiciera falta en el futuro).
+  Piensa en ella como una "llave maestra" de emergencia, no como una cuenta
+  de uso diario.
+- **`dueno`** — gestiona el taller entero: todo lo que puede hacer un
+  `encargado` (ver abajo) MÁS **Gestión de personal** completa — crear,
+  editar (incluido el rol), desactivar o eliminar CUALQUIER cuenta de
+  personal, incluidos otros dueños o encargados. Es el rol con más
+  permisos operativos del día a día.
+- **`encargado`** — mismo acceso operativo que siempre: Check-in, Panel de
+  gestión, Entrega, Historial, Próximas revisiones, Agenda, **Inventario**,
+  **Flota** y **Estadísticas**. Desde el batch 19 **ya NO ve Gestión de
+  personal** — esa pantalla es ahora solo de dueño/admin.
 - **`mecanico`** — mismo día a día del taller (Check-in, Panel de gestión,
-  Entrega, Historial, Próximas revisiones), pero **sin** la pestaña de
-  Inventario ni la de Gestión de personal, y sin ver ningún dato de
-  precio/coste del taller — ni el inventario actual ni ningún campo de
-  precio/coste que se añada en el futuro está pensado para que lo vea un
-  mecánico; esa restricción se aplica ocultando la pestaña entera, no solo
-  algunos campos sueltos dentro de ella.
+  Entrega, Historial, Agenda, Inventario en solo lectura), pero **sin**
+  Gestión de personal, Flota, Estadísticas ni **Próximas revisiones**, y sin
+  ver ningún dato de precio/coste del taller.
+- **`recepcionista`** — rol nuevo del batch 19, pensado para quien atiende
+  al cliente y la agenda pero no trabaja en el coche: Solicitud de cita,
+  Agenda y Panel de gestión (para ver lo pendiente y gestionar bien las
+  citas), Check-in, Entrega e Historial. **Sin** Inventario, **sin**
+  Próximas revisiones, y sin Flota/Estadísticas/Gestión de personal.
 - **`cliente`** — una cuenta que el propio cliente se crea desde el Portal
   de cliente (sección 14). Ve únicamente su propio Portal, nunca los datos
   de otros clientes ni nada del taller.
 
 La primera cuenta de personal (la que se crea a mano en el dashboard,
-sección 2 paso 3) es siempre `encargado`. A partir de ahí, el encargado da
-de alta a los mecánicos desde dentro de la propia app (sección 13) — no
-hace falta volver al dashboard de Supabase para eso.
+sección 2 paso 3) pasa a `dueno` al ejecutar `roles_v2_migration.sql` (si
+ya tenías el proyecto de antes de este batch, tu cuenta `encargado` se
+convierte automáticamente en `dueno` — ver esa migración). A partir de ahí,
+el dueño da de alta a todo el resto del personal desde dentro de la propia
+app (sección 13) — no hace falta volver al dashboard de Supabase para eso,
+salvo para crear una cuenta `admin` (deliberadamente fuera de la app, ver
+sección 13).
 
 Toda cuenta que ya existiera en el proyecto antes de aplicar los roles
-finos se trata como `encargado` automáticamente (tanto por las migraciones
-SQL como, por si acaso, por la propia app: si la tabla `perfiles` no
-existe todavía o no encuentra una fila para la sesión activa, asume rol
-`encargado` en vez de bloquear el acceso), así que ninguna cuenta pierde
-acceso por no haber aplicado la migración todavía. El nombre de la cuenta,
-en la esquina superior derecha de la barra de navegación, es un menú
-desplegable — ver sección 13.1.
+finos originales se trata como `dueno` automáticamente si la app no
+encuentra su fila en `perfiles` (por si alguna migración no se ha
+ejecutado todavía), así que ninguna cuenta pierde acceso por eso. El
+nombre de la cuenta, en la esquina superior derecha de la barra de
+navegación, es un menú desplegable — ver sección 13.1.
+
+**Nota de seguridad**: cambiar el rol o desactivar una cuenta SIEMPRE pasa
+por la Edge Function `administrar-cuenta-personal` (que comprueba que quien
+llama es dueño/admin) — un trigger en la propia base de datos
+(`bloquear_cambio_rol_propio`, ver `roles_v2_migration.sql`) bloquea
+cualquier intento de cambiar `rol`/`activo` que no venga de ahí, así que ni
+manipulando la petición a mano se puede uno auto-ascender.
 
 ## 13. Gestión de personal
 
-Pestaña **"Personal"**, visible solo para el encargado, con:
+Pestaña **"Personal"**, visible SOLO para dueño y admin desde el batch 19
+(un encargado ya no la ve), con:
 
-- Un formulario para dar de alta una cuenta de **mecánico** directamente
-  (nombre, email y contraseña) — sin enlaces de invitación ni pasos
-  intermedios: en cuanto se crea, esa persona ya puede iniciar sesión con
-  esas credenciales. Por debajo llama a la Edge Function
-  `crear-cuenta-mecanico`, que comprueba que quien la invoca es
-  efectivamente un encargado antes de crear la cuenta (usa la clave
+- Un formulario para dar de alta cualquier cuenta de personal (dueño,
+  encargado, mecánico o recepcionista — el rol se elige en el propio
+  formulario) directamente con nombre, email y contraseña — sin enlaces de
+  invitación ni pasos intermedios: en cuanto se crea, esa persona ya puede
+  iniciar sesión con esas credenciales. Por debajo llama a la Edge Function
+  `crear-cuenta-personal`, que comprueba que quien la invoca es
+  efectivamente dueño o admin antes de crear la cuenta (usa la clave
   `service_role` de Supabase, así que no puede hacerse directamente desde
-  el frontend con la clave `anon`). No hay un formulario separado para dar
-  de alta un **encargado** nuevo directamente: se crea como mecánico con
-  este mismo formulario y luego se asciende con **Editar** (ver más abajo)
-  — así solo hay un flujo de alta que mantener. La única cuenta que se crea
-  como encargado desde el primer momento es la primera de todas, a mano en
-  el dashboard de Supabase (sección 2, paso 3).
-- Un listado de todas las cuentas del taller (encargados y mecánicos), cada
-  una con:
-  - **Editar**: cambiar el nombre, el email o el rol (ascender un mecánico
-    a encargado, o degradar un encargado a mecánico) sin tocar el dashboard
+  el frontend con la clave `anon`). El rol `admin` nunca aparece en este
+  formulario — se crea solo por SQL directo (ver sección 12).
+- Un listado de todas las cuentas de personal (dueños, encargados,
+  mecánicos y recepcionistas — las cuentas `admin` NUNCA aparecen aquí, ni
+  siquiera para un dueño: se gestionan solo por SQL, como protección extra
+  de la cuenta de arranque), cada una con:
+  - **Editar**: cambiar el nombre, el email o el rol sin tocar el dashboard
     de Supabase.
   - **Restablecer contraseña**: manda el enlace de restablecimiento al
     email de esa cuenta — ver sección 20.
   - **Desactivar / Reactivar**: bloquea (o desbloquea) el acceso de una
-    cuenta sin borrar nada — útil para un mecánico que ya no trabaja en el
+    cuenta sin borrar nada — útil para alguien que ya no trabaja en el
     taller pero cuyo historial (piezas usadas, etc.) interesa conservar.
     Una cuenta desactivada no puede volver a iniciar sesión, y si ya tenía
     una sesión abierta, pierde el acceso a los datos al instante (no hace
@@ -436,22 +474,37 @@ Pestaña **"Personal"**, visible solo para el encargado, con:
     ejecutarse cuando la acción es irreversible o bloquea el acceso, y las
     acciones de desactivar/eliminar/cambiar el propio rol están
     deshabilitadas sobre **tu propia cuenta** — así nunca te puedes quedar
-    sin ningún encargado con acceso (si de verdad hace falta, pídeselo a
-    otro encargado, o hazlo desde el dashboard de Supabase).
+    sin ningún dueño/admin con acceso (si de verdad hace falta, pídeselo a
+    otro dueño/admin, o hazlo desde el dashboard de Supabase).
+
+Además, **todo el personal** (cualquier rol, incluido mecánico y
+recepcionista) puede modificarse **a sí mismo** su nombre y email desde el
+menú de la cuenta ("Editar mi nombre/email", ver sección 13.1) aunque no
+tenga acceso a esta pantalla — nunca puede cambiarse el propio rol.
 
 **Requiere desplegar dos Edge Functions una vez**, desde tu propio
 ordenador (no se puede hacer desde este entorno):
 
 ```bash
-supabase functions deploy crear-cuenta-mecanico
+supabase functions deploy crear-cuenta-personal
 supabase functions deploy administrar-cuenta-personal
 ```
 
+(La antigua `crear-cuenta-mecanico` del batch 8 ya no la usa la app —
+puedes borrarla de tu proyecto de Supabase si quieres, no es obligatorio.)
 No hace falta configurar ningún secreto adicional para ninguna de las dos —
 usan las claves de Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`)
 que la plataforma inyecta automáticamente. Hasta que las despliegues, los
 botones correspondientes mostrarán un error claro al usarlos; el resto de
 la app funciona con normalidad.
+
+**Cómo crear una cuenta `admin`** (opcional — no hace falta si ya tienes al
+menos un `dueno`): crea primero la cuenta en Supabase Auth (Authentication
+→ Users → Add user) y luego, desde el SQL Editor:
+
+```sql
+update perfiles set rol = 'admin' where email = 'tu-email-admin@ejemplo.com';
+```
 
 ### 13.1. Menú de la cuenta
 
@@ -463,6 +516,10 @@ separado visualmente del resto de pestañas) es un menú desplegable con:
   pasar por el email (ya hay una sesión abierta) — distinto del
   "¿Olvidaste tu contraseña?" de la pantalla de login, pensado para cuando
   SÍ recuerdas la contraseña actual pero quieres cambiarla.
+- **Editar mi nombre/email** (nuevo en el batch 19): cualquier cuenta de
+  personal (encargado, mecánico, recepcionista... también dueño/admin)
+  puede cambiarse su propio nombre y email aquí mismo, aunque no tenga
+  acceso a Gestión de personal — nunca su propio rol.
 - **Cerrar sesión**.
 
 ## 14. Portal de cliente
@@ -842,11 +899,6 @@ Supabase Realtime.
 - Historial de kilometraje real por vehículo (por ejemplo, pidiéndolo en
   cada visita) para que "Próximas revisiones" deje de depender de una
   estimación.
-- Roles nuevos **admin** (cuenta de arranque, crea al primer "dueño") y
-  **dueño** (crea encargados y gestiona todo), y un rol **recepcionista**
-  (sin acceso a Agenda ni a Próximas revisiones) — solo admin/dueño podrían
-  desactivar, eliminar o modificar otras cuentas; cada usuario podría
-  seguir editando su propio nombre/email/contraseña como hasta ahora.
 - Agenda en vista mensual tipo calendario con un color por día (verde =
   libre, naranja = algunas horas libres, rojo = día ocupado), en vez de la
   lista cronológica actual (sección 26).

@@ -18,9 +18,27 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
+/** Roles gestionables desde esta pantalla — 'admin' NUNCA aparece aquí (se
+ *  crea/gestiona solo por SQL directo, ver README) y 'cliente' tampoco (esa
+ *  cuenta se gestiona desde el propio Portal). */
+type RolGestionable = 'dueno' | 'encargado' | 'mecanico' | 'recepcionista';
+const ROLES_GESTIONABLES: RolGestionable[] = ['dueno', 'encargado', 'mecanico', 'recepcionista'];
+const ETIQUETAS_ROL_GESTIONABLE: Record<RolGestionable, string> = {
+  dueno: 'Dueño',
+  encargado: 'Encargado',
+  mecanico: 'Mecánico',
+  recepcionista: 'Recepcionista',
+};
+const COLORES_ROL_GESTIONABLE: Record<RolGestionable, string> = {
+  dueno: 'bg-purple-100 text-purple-700',
+  encargado: 'bg-indigo-100 text-indigo-700',
+  mecanico: 'bg-sky-100 text-sky-700',
+  recepcionista: 'bg-teal-100 text-teal-700',
+};
+
 interface CuentaPersonal {
   id: string;
-  rol: 'encargado' | 'mecanico';
+  rol: RolGestionable;
   nombre: string | null;
   email: string | null;
   activo: boolean;
@@ -30,39 +48,45 @@ interface FormCrear {
   nombre: string;
   email: string;
   password: string;
+  rol: RolGestionable;
 }
 
 interface FormEditar {
   nombre: string;
   email: string;
-  rol: 'encargado' | 'mecanico';
+  rol: RolGestionable;
 }
 
-const FORM_VACIO: FormCrear = { nombre: '', email: '', password: '' };
+const FORM_VACIO: FormCrear = { nombre: '', email: '', password: '', rol: 'mecanico' };
 
 interface PersonnelPanelProps {
   /** Id de la propia cuenta (la de quien tiene la sesión abierta) — sirve
-   *  para deshabilitar en la UI las acciones que un encargado no puede
-   *  hacer sobre sí mismo (desactivarse, eliminarse o cambiarse el propio
-   *  rol), como protección contra quedarse fuera del taller sin querer. La
-   *  Edge Function vuelve a comprobar esto igualmente en el servidor, por
-   *  si alguien manipulase la petición a mano. */
+   *  para deshabilitar en la UI las acciones que nadie puede hacer sobre sí
+   *  mismo (desactivarse, eliminarse o cambiarse el propio rol), como
+   *  protección contra quedarse fuera del taller sin querer. La Edge
+   *  Function vuelve a comprobar esto igualmente en el servidor, por si
+   *  alguien manipulase la petición a mano. */
   miId: string;
 }
 
 /**
- * Gestión de personal — SOLO visible para un 'encargado' (ver gating en
- * App.tsx). Permite:
- *  - Crear cuentas de 'mecanico' directamente (nombre + email + contraseña,
- *    sin invitación por email).
+ * Gestión de personal — desde el batch 19, SOLO visible para 'admin'/'dueno'
+ * (ver gating en App.tsx; un 'encargado' ya NO tiene acceso a esta
+ * pantalla). Permite:
+ *  - Crear cuentas de dueño/encargado/mecánico/recepcionista directamente
+ *    (nombre + email + contraseña + rol, sin invitación por email).
  *  - Editar el nombre, email o rol de una cuenta existente.
  *  - Desactivar/reactivar una cuenta (bloquea el acceso sin borrar nada).
  *  - Eliminar una cuenta por completo (irreversible).
  *  - Restablecer la contraseña de cualquier cuenta, propia o ajena.
  *
+ * Las cuentas 'admin' nunca aparecen en esta lista (se gestionan solo por
+ * SQL directo, ver README) — así queda protegida la cuenta de arranque de
+ * un desactivado/borrado accidental desde la app.
+ *
  * Todo lo que necesita privilegios de administración de Supabase Auth
  * (crear, editar email, desactivar, eliminar) pasa por Edge Functions
- * (`crear-cuenta-mecanico` / `administrar-cuenta-personal`) — si no están
+ * (`crear-cuenta-personal` / `administrar-cuenta-personal`) — si no están
  * desplegadas todavía en el proyecto de Supabase, el botón correspondiente
  * falla con un aviso claro y el resto de la app sigue funcionando igual
  * (ver README).
@@ -98,7 +122,7 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
     const { data, error: fetchError } = await supabase
       .from('perfiles')
       .select('id, rol, nombre, email, activo')
-      .in('rol', ['encargado', 'mecanico'])
+      .in('rol', ROLES_GESTIONABLES)
       .order('rol', { ascending: true })
       .order('nombre', { ascending: true });
     if (fetchError) {
@@ -120,15 +144,20 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
     setError(null);
     setAvisoCreacion(null);
 
-    const { data, error: invokeError } = await supabase.functions.invoke('crear-cuenta-mecanico', {
-      body: { nombre: form.nombre.trim(), email: form.email.trim(), password: form.password },
+    const { data, error: invokeError } = await supabase.functions.invoke('crear-cuenta-personal', {
+      body: {
+        nombre: form.nombre.trim(),
+        email: form.email.trim(),
+        password: form.password,
+        rol: form.rol,
+      },
     });
 
     setCreando(false);
     if (invokeError) {
       setError(
         `No se pudo crear la cuenta: ${invokeError.message}. Puede que la función ` +
-          '"crear-cuenta-mecanico" no esté desplegada todavía en tu proyecto de Supabase (ver README).',
+          '"crear-cuenta-personal" no esté desplegada todavía en tu proyecto de Supabase (ver README).',
       );
       return;
     }
@@ -138,7 +167,9 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
       return;
     }
 
-    setAvisoCreacion(`Cuenta de mecánico creada para ${form.email.trim()}.`);
+    setAvisoCreacion(
+      `Cuenta de ${ETIQUETAS_ROL_GESTIONABLE[form.rol].toLowerCase()} creada para ${form.email.trim()}.`,
+    );
     setForm(FORM_VACIO);
     setFormAbierto(false);
     cargarCuentas();
@@ -246,7 +277,9 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
           </span>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Gestión de personal</h1>
-            <p className="text-sm text-gray-500">Cuentas de encargado y mecánico del taller.</p>
+            <p className="text-sm text-gray-500">
+              Cuentas de dueño, encargado, mecánico y recepcionista del taller.
+            </p>
           </div>
         </div>
         <button
@@ -254,7 +287,7 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
           onClick={() => setFormAbierto((v) => !v)}
           className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
         >
-          <Plus className="h-4 w-4" /> Crear mecánico
+          <Plus className="h-4 w-4" /> Crear cuenta
         </button>
       </header>
 
@@ -264,7 +297,7 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
           className="mb-6 space-y-4 rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5"
         >
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-gray-800">Nueva cuenta de mecánico</h2>
+            <h2 className="font-semibold text-gray-800">Nueva cuenta de personal</h2>
             <button
               type="button"
               onClick={() => setFormAbierto(false)}
@@ -275,9 +308,28 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
             </button>
           </div>
           <p className="text-xs text-gray-500">
-            Un mecánico puede usar Check-in, Panel de gestión y Entrega, pero no ve Inventario ni esta
-            pantalla de Gestión de personal.
+            Un mecánico usa Check-in/Panel/Entrega/Inventario (solo lectura); un recepcionista usa
+            Solicitud de cita/Agenda/Panel de gestión, sin Inventario; un encargado tiene además
+            Inventario, Flota y Estadísticas; solo dueño/admin ven esta pantalla.
           </p>
+
+          <div className="space-y-1">
+            <label htmlFor="personal-rol" className="text-sm font-medium text-gray-700">
+              Rol
+            </label>
+            <select
+              id="personal-rol"
+              value={form.rol}
+              onChange={(e) => setForm((p) => ({ ...p, rol: e.target.value as RolGestionable }))}
+              className="w-full rounded-lg border border-gray-300 px-2.5 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              {ROLES_GESTIONABLES.map((r) => (
+                <option key={r} value={r}>
+                  {ETIQUETAS_ROL_GESTIONABLE[r]}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="space-y-1">
             <label htmlFor="mecanico-nombre" className="text-sm font-medium text-gray-700">
@@ -396,16 +448,19 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
                         value={formEditar.rol}
                         disabled={esMiPropiaCuenta}
                         onChange={(e) =>
-                          setFormEditar((p) => ({ ...p, rol: e.target.value as 'encargado' | 'mecanico' }))
+                          setFormEditar((p) => ({ ...p, rol: e.target.value as RolGestionable }))
                         }
                         className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
                       >
-                        <option value="encargado">Encargado</option>
-                        <option value="mecanico">Mecánico</option>
+                        {ROLES_GESTIONABLES.map((r) => (
+                          <option key={r} value={r}>
+                            {ETIQUETAS_ROL_GESTIONABLE[r]}
+                          </option>
+                        ))}
                       </select>
                       {esMiPropiaCuenta && (
                         <p className="text-[11px] text-gray-400">
-                          No puedes cambiar tu propio rol (pídeselo a otro encargado).
+                          No puedes cambiar tu propio rol (pídeselo a otro dueño o administrador).
                         </p>
                       )}
                     </div>
@@ -437,13 +492,9 @@ export default function PersonnelPanel({ miId }: PersonnelPanelProps) {
                             {cuenta.nombre || cuenta.email || 'Sin nombre'}
                           </p>
                           <span
-                            className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                              cuenta.rol === 'encargado'
-                                ? 'bg-indigo-100 text-indigo-700'
-                                : 'bg-sky-100 text-sky-700'
-                            }`}
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${COLORES_ROL_GESTIONABLE[cuenta.rol]}`}
                           >
-                            {cuenta.rol === 'encargado' ? 'Encargado' : 'Mecánico'}
+                            {ETIQUETAS_ROL_GESTIONABLE[cuenta.rol]}
                           </span>
                           {esMiPropiaCuenta && (
                             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">

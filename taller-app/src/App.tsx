@@ -109,13 +109,13 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Averigua el rol de la cuenta (encargado / mecánico del taller, o
-  // cliente del Portal de cliente) en cuanto hay sesión — ver tabla
-  // `perfiles`. Si la consulta falla (por ejemplo, la migración de roles
-  // finos todavía no se ha ejecutado en este proyecto) o no encuentra
-  // fila, se trata como 'encargado' por compatibilidad (el rol con más
-  // permisos) — así ningún acceso existente se rompe por no haber aplicado
-  // la migración todavía.
+  // Averigua el rol de la cuenta (personal del taller, o cliente del
+  // Portal de cliente) en cuanto hay sesión — ver tabla `perfiles`. Si la
+  // consulta falla (por ejemplo, alguna migración de roles todavía no se
+  // ha ejecutado en este proyecto) o no encuentra fila, se trata como
+  // 'dueno' por compatibilidad (el rol operativo con más permisos, sin
+  // llegar a 'admin') — así ningún acceso existente se rompe por no haber
+  // aplicado la migración todavía.
   //
   // OJO: la dependencia es `session?.user.id`, NO el objeto `session`
   // completo. Supabase dispara `onAuthStateChange` (y por tanto
@@ -149,7 +149,7 @@ function App() {
         if (error || !data) {
           setPerfil({
             id: sesionActual.user.id,
-            rol: 'encargado',
+            rol: 'dueno',
             nombre: null,
             email: sesionActual.user.email ?? null,
             activo: true,
@@ -228,6 +228,34 @@ function App() {
     );
   }
 
+  // 'admin' es una cuenta de arranque (creada a mano por SQL, ver README) que
+  // solo sirve para crear al primer 'dueno' del taller — no ve check-in, el
+  // panel de gestión, ni ningún dato de clientes: solo Gestión de personal,
+  // para no tener acceso a nada más de lo estrictamente necesario para su
+  // única función.
+  if (perfil.rol === 'admin') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-blue-50">
+        <nav className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-blue-600 px-4 py-3 shadow-md">
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white">
+              <Wrench className="h-4 w-4" />
+            </span>
+            <span className="font-bold text-white">TallerGo · Administración</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => supabase.auth.signOut()}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-white/90 hover:bg-white/10"
+          >
+            Cerrar sesión
+          </button>
+        </nav>
+        <PersonnelPanel miId={session.user.id} />
+      </div>
+    );
+  }
+
   // Cuenta de personal desactivada desde "Gestión de personal" (ver
   // PersonnelPanel.tsx) — se comprueba aquí, antes de mostrar nada del
   // resto de la app, aunque la sesión siga siendo técnicamente válida (el
@@ -243,8 +271,8 @@ function App() {
           </span>
           <h1 className="text-lg font-bold text-gray-900">Cuenta desactivada</h1>
           <p className="text-sm text-gray-500">
-            Un encargado ha desactivado tu acceso a TallerGo. Si crees que es un error, habla con
-            tu encargado.
+            Un dueño o administrador ha desactivado tu acceso a TallerGo. Si crees que es un
+            error, habla con tu encargado o dueño.
           </p>
           <button
             type="button"
@@ -258,11 +286,25 @@ function App() {
     );
   }
 
-  // El mecánico SÍ puede consultar el Inventario (para saber si hay stock
-  // antes de empezar un trabajo), pero en modo solo lectura — ver
-  // InventoryPanel.tsx. Gestión de personal, Flota y Estadísticas (y
-  // cualquier precio/coste) siguen reservados al encargado.
-  const esEncargado = perfil.rol === 'encargado';
+  // A partir de aquí `perfil.rol` ya nunca es 'cliente' ni 'admin' (ambos
+  // casos ya han hecho `return` más arriba) — solo dueno/encargado/
+  // mecanico/recepcionista.
+  //
+  // Nivel "encargado": encargado Y dueño heredan todo lo que podía hacer un
+  // encargado (inventario, precios, presupuestos, flota, estadísticas) —
+  // ver InventoryPanel.tsx/ManagementPanel.tsx. Gestión de personal es un
+  // nivel aparte, más estrecho, desde el batch 19: ver `esGestionCuentas`
+  // justo debajo.
+  const esEncargado = perfil.rol === 'dueno' || perfil.rol === 'encargado';
+  // Nivel "gestión de cuentas": desde el batch 19, SOLO dueño (o admin,
+  // gestionado en su propia pantalla más arriba) puede crear, editar,
+  // desactivar o eliminar cuentas de personal — un encargado ya no puede
+  // (antes sí). Ver PersonnelPanel.tsx.
+  const esGestionCuentas = perfil.rol === 'dueno';
+  // Recepcionista: de cara al cliente (solicitud de cita, agenda, ver
+  // pendientes en el panel), pero sin Inventario ni Próximas revisiones —
+  // ver la lista de pestañas debajo.
+  const esRecepcionista = perfil.rol === 'recepcionista';
 
   // Lista de pestañas en un solo sitio, en vez de repetir cada TabButton
   // en dos partes del JSX: se recorre dos veces al pintar (fila horizontal
@@ -305,24 +347,38 @@ function App() {
       icon: <History className="h-4 w-4" />,
       onClick: () => setVista('historial'),
     },
-    {
-      key: 'proximas',
-      label: 'Próximas revisiones',
-      icon: <AlertTriangle className="h-4 w-4" />,
-      onClick: () => setVista('proximas'),
-    },
+    // Próximas revisiones: desde el batch 19, ya no la ve un mecánico "de a
+    // pie" ni un recepcionista — solo encargado/dueño/admin (petición
+    // explícita del usuario).
+    ...(esEncargado
+      ? [
+          {
+            key: 'proximas' as Vista,
+            label: 'Próximas revisiones',
+            icon: <AlertTriangle className="h-4 w-4" />,
+            onClick: () => setVista('proximas'),
+          },
+        ]
+      : []),
     {
       key: 'agenda',
       label: 'Agenda',
       icon: <Calendar className="h-4 w-4" />,
       onClick: () => setVista('agenda'),
     },
-    {
-      key: 'inventario',
-      label: 'Inventario',
-      icon: <Package className="h-4 w-4" />,
-      onClick: () => setVista('inventario'),
-    },
+    // Inventario: oculto entero para recepcionista (a diferencia del
+    // mecánico, que sí lo ve en modo solo lectura desde el batch 18) — un
+    // recepcionista no necesita consultar stock de piezas.
+    ...(esRecepcionista
+      ? []
+      : [
+          {
+            key: 'inventario' as Vista,
+            label: 'Inventario',
+            icon: <Package className="h-4 w-4" />,
+            onClick: () => setVista('inventario'),
+          },
+        ]),
     ...(esEncargado
       ? [
           {
@@ -332,16 +388,22 @@ function App() {
             onClick: () => setVista('estadisticas'),
           },
           {
-            key: 'gestion_personal' as Vista,
-            label: 'Personal',
-            icon: <Users className="h-4 w-4" />,
-            onClick: () => setVista('gestion_personal'),
-          },
-          {
             key: 'flota_repuesto' as Vista,
             label: 'Flota',
             icon: <Car className="h-4 w-4" />,
             onClick: () => setVista('flota_repuesto'),
+          },
+        ]
+      : []),
+    // Gestión de personal: desde el batch 19, solo admin/dueño (ya no
+    // encargado) — ver `esGestionCuentas` arriba.
+    ...(esGestionCuentas
+      ? [
+          {
+            key: 'gestion_personal' as Vista,
+            label: 'Personal',
+            icon: <Users className="h-4 w-4" />,
+            onClick: () => setVista('gestion_personal'),
           },
         ]
       : []),
@@ -381,10 +443,14 @@ function App() {
           <div className="ml-auto flex shrink-0 items-center gap-3 border-l border-white/25 pl-4">
             <BuscadorGlobal onSeleccionar={irAHistorialDesdeBusqueda} />
             <CuentaMenu
+              miId={session.user.id}
               nombre={perfil.nombre || nombreUsuario(session)}
               email={perfil.email ?? session.user.email ?? ''}
               rol={perfil.rol}
               onCerrarSesion={() => supabase.auth.signOut()}
+              onPerfilActualizado={(cambios) =>
+                setPerfil((prev) => (prev ? { ...prev, ...cambios } : prev))
+              }
             />
             <button
               type="button"
@@ -438,8 +504,8 @@ function App() {
       )}
       {vista === 'historial' && <HistorialVehiculo matriculaInicial={matriculaBuscada} />}
       {vista === 'proximas' && <ProximasRevisiones />}
-      {vista === 'inventario' && <InventoryPanel esEncargado={esEncargado} />}
-      {vista === 'gestion_personal' && esEncargado && <PersonnelPanel miId={session.user.id} />}
+      {vista === 'inventario' && !esRecepcionista && <InventoryPanel esEncargado={esEncargado} />}
+      {vista === 'gestion_personal' && esGestionCuentas && <PersonnelPanel miId={session.user.id} />}
       {vista === 'flota_repuesto' && esEncargado && <FlotaRepuestoPanel />}
       {vista === 'agenda' && <AgendaPanel />}
       {vista === 'estadisticas' && esEncargado && <EstadisticasPanel />}

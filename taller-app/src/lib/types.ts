@@ -182,21 +182,32 @@ export interface CocheRepuesto {
   precio_hora: number | null;
 }
 
-/** Rol de una cuenta de Supabase Auth: 'encargado' gestiona el taller
- *  entero (inventario, altas de personal, y todo lo que puede hacer un
- *  'mecanico' además); 'mecanico' es personal del taller con acceso a
- *  check-in/panel/entrega pero SIN Inventario, SIN Gestión de personal, y
- *  sin ver ningún precio/coste que pueda añadirse en el futuro; 'cliente'
- *  es una cuenta que el propio cliente se crea desde el Portal de cliente
- *  para pedir cita sin pasar por el mecánico. Se guarda en la tabla
+/** Rol de una cuenta de Supabase Auth — jerarquía desde el batch 19:
+ *  'admin' es una cuenta de arranque (se crea a mano por SQL, nunca desde la
+ *  app) que solo sirve para crear al primer 'dueno' — no ve check-in, panel
+ *  ni ningún dato de clientes, solo la pantalla de Gestión de personal;
+ *  'dueno' gestiona el taller entero: todo lo que puede hacer un
+ *  'encargado' además de crear/editar/desactivar/eliminar CUALQUIER cuenta
+ *  de personal (incluidos otros encargados) desde Gestión de personal —
+ *  antes esto lo hacía el 'encargado', ya no; 'encargado' tiene el mismo
+ *  acceso operativo de siempre (inventario, precios, presupuestos, flota,
+ *  estadísticas) pero YA NO ve Gestión de personal; 'mecanico' es personal
+ *  del taller con acceso a check-in/panel/entrega/inventario en solo
+ *  lectura, pero SIN Gestión de personal, SIN Flota, SIN Estadísticas, SIN
+ *  Próximas revisiones, y sin ver ningún precio/coste; 'recepcionista' es
+ *  personal de cara al cliente (solicitud de cita, agenda, panel de
+ *  gestión para ver pendientes) pero SIN Inventario, SIN Próximas
+ *  revisiones, SIN Gestión de personal, SIN Flota, SIN Estadísticas;
+ *  'cliente' es una cuenta que el propio cliente se crea desde el Portal de
+ *  cliente para pedir cita sin pasar por el mecánico. Se guarda en la tabla
  *  `perfiles` (no en `clientes`, que es el registro de datos de
  *  facturación/contacto que rellena el mecánico en el check-in — son cosas
  *  distintas: un mismo cliente de toda la vida puede no tener nunca una
  *  cuenta, y una cuenta nueva no tiene por qué tener aún una fila en
- *  `clientes`). Las cuentas de 'encargado'/'mecanico' se crean a mano (la
- *  primera desde el dashboard de Supabase, las siguientes desde la propia
- *  app en Gestión de personal); 'cliente' se auto-asigna al registrarse. */
-export type RolPerfil = 'encargado' | 'mecanico' | 'cliente';
+ *  `clientes`). Las cuentas de personal (salvo 'admin', solo por SQL) se
+ *  crean desde la propia app en Gestión de personal (solo visible para
+ *  'admin'/'dueno'); 'cliente' se auto-asigna al registrarse. */
+export type RolPerfil = 'admin' | 'dueno' | 'encargado' | 'mecanico' | 'recepcionista' | 'cliente';
 
 export interface Perfil {
   id: string; // == auth.users.id
