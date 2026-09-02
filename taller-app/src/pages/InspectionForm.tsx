@@ -18,6 +18,19 @@ import CarDamagePicker from '../components/CarDamagePicker';
 import SignatureModal from '../components/SignatureModal';
 import { generarYSubirInformePdf } from '../lib/generateReportPdf';
 import { buildWhatsAppLink } from '../lib/whatsapp';
+import {
+  aniosVehiculo,
+  COMBUSTIBLES,
+  FABRICANTES,
+  modelosParaFabricante,
+  NEUMATICO_ANCHOS,
+  NEUMATICO_ESTACIONES,
+  NEUMATICO_INDICES_CARGA,
+  NEUMATICO_INDICES_VELOCIDAD,
+  NEUMATICO_LLANTAS,
+  NEUMATICO_PERFILES,
+  PRESTACIONES_MOTOR_SUGERENCIAS,
+} from '../lib/vehicleData';
 import type {
   DanoMarcador,
   NeumaticosCantidad,
@@ -25,6 +38,8 @@ import type {
   OrdenPendienteRecepcion,
   TipoServicio,
 } from '../lib/types';
+
+const ANIOS_VEHICULO = aniosVehiculo();
 
 const NIVELES_COMBUSTIBLE: NivelCombustible[] = ['1/4', '1/2', '3/4', 'Lleno'];
 const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
@@ -76,12 +91,26 @@ export default function InspectionForm({
   const [marca, setMarca] = useState('');
   const [modelo, setModelo] = useState('');
   const [color, setColor] = useState('');
+  // Añadidos en el batch 19, parte 3 — todos opcionales, con `<datalist>`
+  // de sugerencia (ver src/lib/vehicleData.ts) que siempre admite un valor
+  // que no esté en la lista.
+  const [combustible, setCombustible] = useState('');
+  const [anio, setAnio] = useState('');
+  const [motor, setMotor] = useState('');
   const [tipoServicio, setTipoServicio] = useState<TipoServicio>('mantenimiento');
   const [descripcionAveria, setDescripcionAveria] = useState('');
   // Solo se usan cuando tipoServicio === 'neumaticos'.
   const [neumaticosCantidad, setNeumaticosCantidad] = useState<NeumaticosCantidad>('las_4');
   const [neumaticoFoto, setNeumaticoFoto] = useState<File | null>(null);
   const [neumaticoFotoPreview, setNeumaticoFotoPreview] = useState<string | null>(null);
+  // Medida de neumático por datalist (batch 19, parte 3) — opcional, además
+  // de la foto de arriba (que sigue siendo suficiente por sí sola).
+  const [neumaticoAncho, setNeumaticoAncho] = useState('');
+  const [neumaticoPerfil, setNeumaticoPerfil] = useState('');
+  const [neumaticoLlanta, setNeumaticoLlanta] = useState('');
+  const [neumaticoIndiceCarga, setNeumaticoIndiceCarga] = useState('');
+  const [neumaticoIndiceVelocidad, setNeumaticoIndiceVelocidad] = useState('');
+  const [neumaticoEstacion, setNeumaticoEstacion] = useState('');
 
   // Documentación obligatoria del check-in — se exige AL MENOS una de las
   // dos (validar() más abajo), nunca las dos a la vez: quien trae el coche
@@ -177,11 +206,20 @@ export default function InspectionForm({
     setMarca('');
     setModelo('');
     setColor('');
+    setCombustible('');
+    setAnio('');
+    setMotor('');
     setTipoServicio('mantenimiento');
     setDescripcionAveria('');
     setNeumaticosCantidad('las_4');
     setNeumaticoFoto(null);
     setNeumaticoFotoPreview(null);
+    setNeumaticoAncho('');
+    setNeumaticoPerfil('');
+    setNeumaticoLlanta('');
+    setNeumaticoIndiceCarga('');
+    setNeumaticoIndiceVelocidad('');
+    setNeumaticoEstacion('');
     setPermisoConducirFoto(null);
     setPermisoConducirPreview(null);
     setFichaTecnicaFoto(null);
@@ -248,6 +286,9 @@ export default function InspectionForm({
             marca: marca || null,
             modelo: modelo || null,
             color: color || null,
+            combustible: combustible || null,
+            anio: anio.trim() ? Number(anio) : null,
+            motor: motor || null,
             cliente_id: cliente.id,
           },
           { onConflict: 'matricula' },
@@ -284,6 +325,12 @@ export default function InspectionForm({
         fecha_entrada: new Date().toISOString(),
         neumaticos_cantidad: tipoServicio === 'neumaticos' ? neumaticosCantidad : null,
         neumaticos_foto_url: neumaticoFotoUrl,
+        neumatico_ancho: tipoServicio === 'neumaticos' ? neumaticoAncho || null : null,
+        neumatico_perfil: tipoServicio === 'neumaticos' ? neumaticoPerfil || null : null,
+        neumatico_llanta: tipoServicio === 'neumaticos' ? neumaticoLlanta || null : null,
+        neumatico_indice_carga: tipoServicio === 'neumaticos' ? neumaticoIndiceCarga || null : null,
+        neumatico_indice_velocidad: tipoServicio === 'neumaticos' ? neumaticoIndiceVelocidad || null : null,
+        neumatico_estacion: tipoServicio === 'neumaticos' ? neumaticoEstacion || null : null,
       };
       const { data: orden, error: ordenError } = ordenPendiente
         ? await supabase
@@ -453,9 +500,46 @@ export default function InspectionForm({
         <Seccion titulo="Vehículo y servicio" icono={<Wrench className="h-4 w-4" />} color="violet">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Campo label="Matrícula" value={matricula} onChange={setMatricula} required />
-            <Campo label="Marca" value={marca} onChange={setMarca} required />
-            <Campo label="Modelo" value={modelo} onChange={setModelo} required />
+            <Campo
+              label="Marca"
+              value={marca}
+              onChange={setMarca}
+              required
+              listId="lista-fabricantes"
+              listOptions={FABRICANTES}
+            />
+            <Campo
+              label="Modelo"
+              value={modelo}
+              onChange={setModelo}
+              required
+              listId="lista-modelos"
+              listOptions={modelosParaFabricante(marca)}
+            />
             <Campo label="Color" value={color} onChange={setColor} placeholder="Ej. Rojo, Gris plata" />
+            <Campo
+              label="Combustible (opcional)"
+              value={combustible}
+              onChange={setCombustible}
+              listId="lista-combustibles"
+              listOptions={COMBUSTIBLES}
+            />
+            <Campo
+              label="Año del modelo (opcional)"
+              value={anio}
+              onChange={setAnio}
+              type="number"
+              listId="lista-anios"
+              listOptions={ANIOS_VEHICULO}
+            />
+            <Campo
+              label="Prestaciones del motor (opcional)"
+              value={motor}
+              onChange={setMotor}
+              placeholder="Ej. 1.6 TDI 115CV"
+              listId="lista-motores"
+              listOptions={PRESTACIONES_MOTOR_SUGERENCIAS}
+            />
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de servicio</label>
               <select
@@ -507,8 +591,7 @@ export default function InspectionForm({
                   Foto del neumático actual
                 </label>
                 <p className="mb-2 -mt-1 text-xs text-gray-400">
-                  No hace falta escribir la medida (205/55 R16...): con la foto se ve el neumático
-                  actual tal cual.
+                  La medida de abajo es opcional: con la foto ya se ve el neumático actual tal cual.
                 </p>
                 <div className="flex items-center gap-3">
                   {neumaticoFotoPreview && (
@@ -529,6 +612,53 @@ export default function InspectionForm({
                       className="hidden"
                     />
                   </label>
+                </div>
+              </div>
+              <div className="sm:col-span-2">
+                <p className="mb-2 text-sm font-medium text-gray-700">Medida (opcional)</p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+                  <Campo
+                    label="Ancho"
+                    value={neumaticoAncho}
+                    onChange={setNeumaticoAncho}
+                    listId="lista-neum-ancho"
+                    listOptions={NEUMATICO_ANCHOS}
+                  />
+                  <Campo
+                    label="Perfil"
+                    value={neumaticoPerfil}
+                    onChange={setNeumaticoPerfil}
+                    listId="lista-neum-perfil"
+                    listOptions={NEUMATICO_PERFILES}
+                  />
+                  <Campo
+                    label="Llanta"
+                    value={neumaticoLlanta}
+                    onChange={setNeumaticoLlanta}
+                    listId="lista-neum-llanta"
+                    listOptions={NEUMATICO_LLANTAS}
+                  />
+                  <Campo
+                    label="Índice carga"
+                    value={neumaticoIndiceCarga}
+                    onChange={setNeumaticoIndiceCarga}
+                    listId="lista-neum-carga"
+                    listOptions={NEUMATICO_INDICES_CARGA}
+                  />
+                  <Campo
+                    label="Índice veloc."
+                    value={neumaticoIndiceVelocidad}
+                    onChange={setNeumaticoIndiceVelocidad}
+                    listId="lista-neum-velocidad"
+                    listOptions={NEUMATICO_INDICES_VELOCIDAD}
+                  />
+                  <Campo
+                    label="Estación"
+                    value={neumaticoEstacion}
+                    onChange={setNeumaticoEstacion}
+                    listId="lista-neum-estacion"
+                    listOptions={NEUMATICO_ESTACIONES}
+                  />
                 </div>
               </div>
             </div>
@@ -807,9 +937,14 @@ interface CampoProps {
   type?: string;
   required?: boolean;
   placeholder?: string;
+  /** Si se pasa junto con `listOptions`, el campo lleva un `<datalist>`
+   *  asociado (sugerencias con teclado, pero sigue admitiendo texto libre
+   *  que no esté en la lista) — ver src/lib/vehicleData.ts. */
+  listId?: string;
+  listOptions?: string[];
 }
 
-function Campo({ label, value, onChange, type = 'text', required, placeholder }: CampoProps) {
+function Campo({ label, value, onChange, type = 'text', required, placeholder, listId, listOptions }: CampoProps) {
   return (
     <div>
       <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -822,8 +957,16 @@ function Campo({ label, value, onChange, type = 'text', required, placeholder }:
         onChange={(e) => onChange(e.target.value)}
         required={required}
         placeholder={placeholder}
+        list={listId}
         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
       />
+      {listId && listOptions && (
+        <datalist id={listId}>
+          {listOptions.map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      )}
     </div>
   );
 }

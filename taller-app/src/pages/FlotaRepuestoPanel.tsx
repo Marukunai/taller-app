@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Ban, Car, CheckCircle2, Loader2, Pencil, Plus, RotateCcw, Truck, X } from 'lucide-react';
+import { Ban, Car, CheckCircle2, Link2, Loader2, Pencil, Plus, RotateCcw, Truck, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import EnlazarOrdenModal from '../components/EnlazarOrdenModal';
 import type { CocheRepuesto } from '../lib/types';
 
 interface NuevoCocheForm {
@@ -26,6 +27,10 @@ const FORM_VACIO: NuevoCocheForm = {
 interface PrestamoActivo {
   matriculaCliente: string;
   desde: string;
+  // Añadidos en el batch 19, parte 3 — nombre del cliente y fecha prevista
+  // de devolución, para no tener que ir al Panel de gestión a verlos.
+  clienteNombre: string;
+  fechaPrevista: string | null;
 }
 
 /**
@@ -51,6 +56,9 @@ export default function FlotaRepuestoPanel() {
   const [formEdicion, setFormEdicion] = useState<NuevoCocheForm>(FORM_VACIO);
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   const [cambiandoBajaId, setCambiandoBajaId] = useState<string | null>(null);
+  // Enlazar un coche libre a una orden activa, directamente desde Flota
+  // (batch 19, parte 3) — ver EnlazarOrdenModal.tsx.
+  const [enlazarModal, setEnlazarModal] = useState<{ id: string; matricula: string } | null>(null);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -66,7 +74,10 @@ export default function FlotaRepuestoPanel() {
     }
     const { data: activas, error: activasError } = await supabase
       .from('ordenes_trabajo')
-      .select('coche_repuesto_id, fecha_prestamo_repuesto, vehiculos(matricula)')
+      .select(
+        'coche_repuesto_id, fecha_prestamo_repuesto, fecha_devolucion_repuesto_prevista, ' +
+          'vehiculos(matricula, clientes(nombre)), solicitudes(matricula, nombre_cliente)',
+      )
       .not('coche_repuesto_id', 'is', null)
       .is('fecha_devolucion_repuesto', null);
     if (activasError) {
@@ -78,11 +89,15 @@ export default function FlotaRepuestoPanel() {
     for (const fila of (activas ?? []) as unknown as {
       coche_repuesto_id: string;
       fecha_prestamo_repuesto: string | null;
-      vehiculos: { matricula: string } | null;
+      fecha_devolucion_repuesto_prevista: string | null;
+      vehiculos: { matricula: string; clientes: { nombre: string } | null } | null;
+      solicitudes: { matricula: string | null; nombre_cliente: string } | null;
     }[]) {
       mapa[fila.coche_repuesto_id] = {
-        matriculaCliente: fila.vehiculos?.matricula ?? '—',
+        matriculaCliente: fila.vehiculos?.matricula ?? fila.solicitudes?.matricula ?? '—',
         desde: fila.fecha_prestamo_repuesto ?? '',
+        clienteNombre: fila.vehiculos?.clientes?.nombre ?? fila.solicitudes?.nombre_cliente ?? 'Cliente',
+        fechaPrevista: fila.fecha_devolucion_repuesto_prevista,
       };
     }
     setPrestamos(mapa);
@@ -258,10 +273,13 @@ export default function FlotaRepuestoPanel() {
               De baja
             </span>
           ) : prestamo ? (
-            <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-              Prestado a {prestamo.matriculaCliente}
+            <span className="mt-1 block rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+              Prestado a {prestamo.clienteNombre} ({prestamo.matriculaCliente})
               {prestamo.desde
                 ? ` desde el ${new Date(prestamo.desde).toLocaleDateString('es-ES')}`
+                : ''}
+              {prestamo.fechaPrevista
+                ? ` · devolución prevista: ${new Date(prestamo.fechaPrevista).toLocaleDateString('es-ES')}`
                 : ''}
             </span>
           ) : (
@@ -271,6 +289,17 @@ export default function FlotaRepuestoPanel() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {!coche.baja && !prestamo && (
+            <button
+              type="button"
+              onClick={() => setEnlazarModal({ id: coche.id, matricula: coche.matricula })}
+              className="rounded-full border border-blue-200 p-1.5 text-blue-600 hover:bg-blue-50"
+              aria-label="Enlazar a una orden"
+              title="Enlazar a una orden de reparación"
+            >
+              <Link2 className="h-4 w-4" />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => abrirEdicion(coche)}
@@ -403,6 +432,16 @@ export default function FlotaRepuestoPanel() {
           )}
         </div>
       )}
+
+      <EnlazarOrdenModal
+        open={enlazarModal !== null}
+        coche={enlazarModal}
+        onClose={() => setEnlazarModal(null)}
+        onEnlazado={() => {
+          setEnlazarModal(null);
+          cargar();
+        }}
+      />
     </div>
   );
 }

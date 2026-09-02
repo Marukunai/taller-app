@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { CalendarClock, ChevronDown, ChevronUp, Loader2, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import SolicitudesPanel from '../components/SolicitudesPanel';
+import { FABRICANTES, modelosParaFabricante } from '../lib/vehicleData';
 import type { NeumaticosCantidad, TipoServicio } from '../lib/types';
 
 const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
@@ -158,11 +159,15 @@ export default function SolicitudCitaPanel() {
                 label="Marca"
                 value={form.marca}
                 onChange={(v) => setForm((p) => ({ ...p, marca: v }))}
+                listId="lista-fabricantes-cita"
+                listOptions={FABRICANTES}
               />
               <Campo
                 label="Modelo"
                 value={form.modelo}
                 onChange={(v) => setForm((p) => ({ ...p, modelo: v }))}
+                listId="lista-modelos-cita"
+                listOptions={modelosParaFabricante(form.marca)}
               />
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de servicio</label>
@@ -254,9 +259,11 @@ interface CampoProps {
   onChange: (value: string) => void;
   type?: string;
   required?: boolean;
+  listId?: string;
+  listOptions?: string[];
 }
 
-function Campo({ label, value, onChange, type = 'text', required }: CampoProps) {
+function Campo({ label, value, onChange, type = 'text', required, listId, listOptions }: CampoProps) {
   return (
     <div>
       <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -268,8 +275,16 @@ function Campo({ label, value, onChange, type = 'text', required }: CampoProps) 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
+        list={listId}
         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
       />
+      {listId && listOptions && (
+        <datalist id={listId}>
+          {listOptions.map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      )}
     </div>
   );
 }

@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Car, CalendarClock, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, XCircle } from 'lucide-react';
+import { Car, CalendarClock, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, Save, XCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { EstadoSolicitud, NeumaticosCantidad, Solicitud, TipoServicio } from '../lib/types';
+
+/** Convierte una fecha ISO (o null) al formato que espera un
+ *  `<input type="datetime-local">` ("YYYY-MM-DDTHH:mm", en hora LOCAL, no
+ *  UTC) — para poder prellenar el campo con lo que el cliente ya propuso. */
+function aDatetimeLocal(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
   mantenimiento: 'Mantenimiento',
@@ -45,6 +55,13 @@ export default function SolicitudesPanel() {
   const [error, setError] = useState<string | null>(null);
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [procesandoId, setProcesandoId] = useState<string | null>(null);
+  // Horario acordado para traer el vehículo (batch 19, parte 3) — se
+  // prellena con lo que el cliente propuso (fecha_cita_checkin), pero el
+  // personal puede cambiarlo antes de aceptar: "última palabra del
+  // mecánico". También se puede fijar/editar después de aceptada, por si no
+  // se decidió en el momento (ver `actualizarFechaCita` más abajo).
+  const [fechasCita, setFechasCita] = useState<Record<string, string>>({});
+  const [guardandoFechaId, setGuardandoFechaId] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -103,9 +120,21 @@ export default function SolicitudesPanel() {
     setProcesandoId(solicitud.id);
     setError(null);
     const respuesta = respuestas[solicitud.id]?.trim() || null;
+    // Al aceptar, el horario que se guarda es el que haya en el campo de
+    // fecha en ese momento (editable por el personal, con lo que propuso el
+    // cliente ya prellenado) — así el mecánico tiene la última palabra sobre
+    // el horario que de verdad entra en la Agenda, en vez de quedarse
+    // siempre con lo que el cliente pidió sin más.
+    const fechaInput = fechasCita[solicitud.id];
+    const fechaCitaFinal =
+      estado === 'aceptada'
+        ? fechaInput
+          ? new Date(fechaInput).toISOString()
+          : solicitud.fecha_cita_checkin
+        : solicitud.fecha_cita_checkin;
     const { error: updateError } = await supabase
       .from('solicitudes')
-      .update({ estado, respuesta_taller: respuesta })
+      .update({ estado, respuesta_taller: respuesta, fecha_cita_checkin: fechaCitaFinal })
       .eq('id', solicitud.id);
     if (updateError) {
       setProcesandoId(null);
@@ -136,7 +165,35 @@ export default function SolicitudesPanel() {
 
     setProcesandoId(null);
     setSolicitudes((prev) =>
-      prev.map((s) => (s.id === solicitud.id ? { ...s, estado, respuesta_taller: respuesta } : s)),
+      prev.map((s) =>
+        s.id === solicitud.id
+          ? { ...s, estado, respuesta_taller: respuesta, fecha_cita_checkin: fechaCitaFinal }
+          : s,
+      ),
+    );
+  };
+
+  /** Fija o cambia el horario acordado de una solicitud YA aceptada (por si
+   *  no se decidió en el momento de aceptar) — en cuanto se guarda, aparece
+   *  (o se actualiza) en la Agenda, que ya lee `fecha_cita_checkin` de
+   *  cualquier solicitud aceptada. */
+  const actualizarFechaCita = async (solicitud: Solicitud) => {
+    const fechaInput = fechasCita[solicitud.id];
+    if (!fechaInput) return;
+    setGuardandoFechaId(solicitud.id);
+    setError(null);
+    const fechaIso = new Date(fechaInput).toISOString();
+    const { error: updateError } = await supabase
+      .from('solicitudes')
+      .update({ fecha_cita_checkin: fechaIso })
+      .eq('id', solicitud.id);
+    setGuardandoFechaId(null);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setSolicitudes((prev) =>
+      prev.map((s) => (s.id === solicitud.id ? { ...s, fecha_cita_checkin: fechaIso } : s)),
     );
   };
 
@@ -178,6 +235,18 @@ export default function SolicitudesPanel() {
                     className="space-y-2.5 rounded-xl border border-amber-200 bg-amber-50/40 p-4 shadow-sm"
                   >
                     <TarjetaCabecera s={s} />
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-gray-500">
+                        Horario acordado para traer el vehículo (opcional — al aceptar, tiene la última
+                        palabra el mecánico, aunque el cliente haya propuesto otro)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={fechasCita[s.id] ?? aDatetimeLocal(s.fecha_cita_checkin)}
+                        onChange={(e) => setFechasCita((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+                      />
+                    </div>
                     <textarea
                       value={respuestas[s.id] ?? ''}
                       onChange={(e) => setRespuestas((prev) => ({ ...prev, [s.id]: e.target.value }))}
@@ -220,6 +289,34 @@ export default function SolicitudesPanel() {
                       <p className="flex items-start gap-1.5 rounded-lg bg-gray-50 px-2.5 py-1.5 text-xs text-gray-600">
                         <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {s.respuesta_taller}
                       </p>
+                    )}
+                    {s.estado === 'aceptada' && (
+                      <div className="flex items-end gap-2">
+                        <div className="flex-1">
+                          <label className="mb-1 block text-[11px] font-medium text-gray-500">
+                            {s.fecha_cita_checkin ? 'Cambiar horario en la Agenda' : 'Fijar horario en la Agenda'}
+                          </label>
+                          <input
+                            type="datetime-local"
+                            value={fechasCita[s.id] ?? aDatetimeLocal(s.fecha_cita_checkin)}
+                            onChange={(e) => setFechasCita((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                            className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => actualizarFechaCita(s)}
+                          disabled={guardandoFechaId === s.id || !fechasCita[s.id]}
+                          className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
+                        >
+                          {guardandoFechaId === s.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Save className="h-3.5 w-3.5" />
+                          )}
+                          Guardar
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}

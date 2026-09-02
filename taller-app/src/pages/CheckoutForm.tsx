@@ -19,11 +19,15 @@ interface OrdenListo {
   estado: EstadoOrden;
   tipo_servicio: TipoServicio;
   fecha_entrada: string | null;
+  vehiculo_id: string | null;
   vehiculos: {
     matricula: string;
     marca: string | null;
     modelo: string | null;
     color: string | null;
+    // Aviso anual (batch 19, parte 3) — se prellena el checkbox de la
+    // Entrega con lo que ya se hubiera aceptado en una visita anterior.
+    aviso_anual_aceptado: boolean;
     clientes: { nombre: string; telefono: string } | null;
   } | null;
   inspecciones_entrada: { fotos_urls: string[] | null; pdf_informe_url: string | null }[] | null;
@@ -92,6 +96,10 @@ export default function CheckoutForm({ ordenIdInicial, onEntregado }: CheckoutFo
   const [generandoInforme, setGenerandoInforme] = useState(false);
   const [resultado, setResultado] = useState<{ pdfUrl: string; whatsappUrl: string } | null>(null);
   const [avisoInforme, setAvisoInforme] = useState<string | null>(null);
+  // Aviso anual de revisión (batch 19, parte 3) — checkbox opcional junto a
+  // la firma de salida; se prellena con lo que el vehículo ya tuviera
+  // aceptado de una entrega anterior.
+  const [avisoAnualAceptado, setAvisoAnualAceptado] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -99,8 +107,8 @@ export default function CheckoutForm({ ordenIdInicial, onEntregado }: CheckoutFo
       const { data, error: fetchError } = await supabase
         .from('ordenes_trabajo')
         .select(
-          'id, estado, tipo_servicio, fecha_entrada, ' +
-            'vehiculos(matricula, marca, modelo, color, clientes(nombre, telefono)), ' +
+          'id, estado, tipo_servicio, fecha_entrada, vehiculo_id, ' +
+            'vehiculos(matricula, marca, modelo, color, aviso_anual_aceptado, clientes(nombre, telefono)), ' +
             'inspecciones_entrada(fotos_urls, pdf_informe_url)',
         )
         .eq('estado', 'listo')
@@ -113,7 +121,10 @@ export default function CheckoutForm({ ordenIdInicial, onEntregado }: CheckoutFo
         setOrdenesListas(lista);
         if (ordenIdInicial) {
           const preseleccionada = lista.find((o) => o.id === ordenIdInicial);
-          if (preseleccionada) setOrdenSeleccionada(preseleccionada);
+          if (preseleccionada) {
+            setOrdenSeleccionada(preseleccionada);
+            setAvisoAnualAceptado(preseleccionada.vehiculos?.aviso_anual_aceptado ?? false);
+          }
         }
       }
       setCargando(false);
@@ -138,6 +149,22 @@ export default function CheckoutForm({ ordenIdInicial, onEntregado }: CheckoutFo
       return;
     }
     const orden = ordenSeleccionada;
+
+    // Aviso anual de revisión (batch 19, parte 3) — se guarda en el propio
+    // vehículo (no en la orden), para que quede recordado en las próximas
+    // visitas aunque cambie de orden. No bloquea la entrega si falla: es
+    // una preferencia opcional, no algo crítico para el flujo de entrega.
+    if (orden.vehiculo_id) {
+      try {
+        await supabase
+          .from('vehiculos')
+          .update({ aviso_anual_aceptado: avisoAnualAceptado })
+          .eq('id', orden.vehiculo_id);
+      } catch {
+        // Se ignora en silencio — ver comentario de arriba.
+      }
+    }
+
     setOrdenesListas((prev) => prev.filter((o) => o.id !== orden.id));
     setOrdenSeleccionada(null);
     setExito(true);
@@ -337,7 +364,10 @@ export default function CheckoutForm({ ordenIdInicial, onEntregado }: CheckoutFo
                   <li key={orden.id}>
                     <button
                       type="button"
-                      onClick={() => setOrdenSeleccionada(orden)}
+                      onClick={() => {
+                        setOrdenSeleccionada(orden);
+                        setAvisoAnualAceptado(orden.vehiculos?.aviso_anual_aceptado ?? false);
+                      }}
                       className="flex w-full items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-blue-300 hover:bg-blue-50"
                     >
                       {foto ? (
@@ -417,6 +447,19 @@ export default function CheckoutForm({ ordenIdInicial, onEntregado }: CheckoutFo
             <p className="text-sm font-medium text-gray-900">{ordenSeleccionada.vehiculos?.clientes?.nombre}</p>
             <p className="text-sm text-gray-500">{ordenSeleccionada.vehiculos?.clientes?.telefono}</p>
           </div>
+          <label className="flex items-start gap-2 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 py-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={avisoAnualAceptado}
+              onChange={(e) => setAvisoAnualAceptado(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300"
+            />
+            <span>
+              El cliente acepta que le avisemos cuando toque la próxima revisión (aprox. en 12
+              meses) — opcional, se puede cambiar en cada entrega.
+            </span>
+          </label>
+
           <div className="flex gap-3">
             <button
               type="button"

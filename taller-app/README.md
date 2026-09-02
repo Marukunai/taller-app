@@ -133,6 +133,15 @@ cuentas de mecánico.
 > dashboard si quieres). Si además quieres una cuenta `admin` de arranque,
 > créala a mano por SQL — ver sección 12.
 >
+> Si tu proyecto ya tiene aplicado todo lo anterior y solo quieres añadir la
+> agenda mensual con colores, el préstamo de sustitución mejorado, el aviso
+> anual de revisión y los datalists de vehículo/neumático (secciones 6, 18,
+> 24, 26 y 30), ejecuta
+> [`supabase/batch19_parte3_migration.sql`](./supabase/batch19_parte3_migration.sql).
+> También idempotente — solo añade columnas nuevas, todas opcionales, así
+> que no rompe nada de lo que ya funcionaba. No hace falta desplegar ninguna
+> Edge Function nueva para esta migración.
+>
 > Si prefieres borrar todos los datos de prueba y empezar de cero en vez
 > de aplicar migraciones una a una, ejecuta primero
 > [`supabase/reset_database.sql`](./supabase/reset_database.sql) y después
@@ -183,6 +192,7 @@ src/
     types.ts            # tipos compartidos (Cliente, Vehiculo, DanoMarcador...)
     whatsapp.ts          # enlaces wa.me (informe de entrada, de salida, "listo")
     useSolicitudesPendientes.ts # hook: nº de solicitudes de cita pendientes (badge de la pestaña)
+    vehicleData.ts        # datalists de vehículo/neumático: fabricantes, modelos, combustibles, medidas...
   components/
     CarDamagePicker.tsx    # esquema del coche interactivo para marcar daños
     SignatureModal.tsx     # modal de firma digital + cláusulas legales + RGPD
@@ -195,6 +205,7 @@ src/
     CancelarOrdenModal.tsx  # cancela una orden de trabajo (pasa a "Cancelado")
     SolicitudesPanel.tsx    # revisión de solicitudes de cita (Portal o registradas por el taller)
     AsignarRepuestoModal.tsx # asigna un coche de sustitución libre de la flota a una orden
+    EnlazarOrdenModal.tsx    # enlaza un coche de la flota a una orden, en sentido contrario (desde Flota)
     ExitReportPdf.tsx        # plantilla del informe PDF de entrega/salida
   pages/
     SolicitudCitaPanel.tsx # paso 1 del check-in: reserva de cita (dueño+vehículo) — sección 31
@@ -217,6 +228,7 @@ supabase/
   coches_repuesto_migration.sql    # migración incremental: flota de coches de sustitución
   batch18_migration.sql            # migración incremental: precio/hora sustitución, doc. obligatoria check-in, cancelar devuelve stock
   roles_v2_migration.sql           # migración incremental: jerarquía admin/dueño/encargado/mecánico/recepcionista
+  batch19_parte3_migration.sql     # migración incremental: agenda mensual, préstamo mejorado, aviso anual, datalists
   functions/
     enviar-aviso-cliente/         # Edge Function: email real de "vehículo listo"
     crear-cuenta-personal/         # Edge Function: alta de cuentas de personal (cualquier rol asignable)
@@ -234,17 +246,27 @@ supabase/
 1. Se rellenan los datos del cliente y del vehículo — matrícula, marca,
    modelo, teléfono y **email** son obligatorios (no se puede guardar la
    inspección sin ellos). El tipo de servicio incluye ahora también
-   **Pre ITV**, además de Mantenimiento/Neumáticos/Avería.
+   **Pre ITV**, además de Mantenimiento/Neumáticos/Avería. Marca y modelo
+   llevan un `<datalist>` de sugerencia (fabricantes reales y, en función
+   del fabricante ya escrito, sus modelos habituales — ver
+   `src/lib/vehicleData.ts`), pero **siguen admitiendo texto libre** que no
+   esté en la lista: no es una restricción, solo rellena más rápido con el
+   teclado del móvil. Además hay tres campos **opcionales**, también con
+   datalist de sugerencia: combustible, año del modelo y prestaciones del
+   motor (batch 19, parte 3).
 1b. Es obligatorio adjuntar (foto) **al menos uno** de estos dos
    documentos — nunca los dos a la vez: el permiso de conducir (A1, A2, B,
    B+E...) de quien trae el vehículo, o la ficha técnica del vehículo. Se
    suben al bucket `documentos-cliente` y quedan enlazados en
    `inspecciones_entrada` (`permiso_conducir_url`/`ficha_tecnica_url`).
 2. Se registran kilometraje, nivel de combustible y fotos del estado actual.
-3. Si el tipo de servicio es **Neumáticos**, aparecen dos campos adicionales:
-   cuántos neumáticos se van a tocar (2 delanteros, 2 traseros, los 4, o uno
-   concreto) y una foto del neumático actual — no hace falta anotar la
-   medida (205/55 R16...) a mano, con la foto se ve tal cual.
+3. Si el tipo de servicio es **Neumáticos**, aparecen varios campos
+   adicionales: cuántos neumáticos se van a tocar (2 delanteros, 2 traseros,
+   los 4, o uno concreto), una foto del neumático actual, y (batch 19, parte
+   3) la **medida por datalist** — ancho, perfil, llanta, índice de carga,
+   índice de velocidad y estación (verano/invierno/todo tiempo) — todo
+   opcional: la foto sigue siendo suficiente por sí sola si no se quiere
+   rellenar la medida a mano.
 4. Se marcan los daños existentes tocando la silueta del vehículo. El
    esquema muestra 4 vistas a la vez (lateral, frontal, trasera, cenital)
    para poder elegir con precisión en cuál conviene tocar según el daño,
@@ -641,6 +663,17 @@ exacto. Es solo una lista informativa: no manda ningún aviso automático al
 cliente, eso se decide y se hace a mano (por ejemplo por WhatsApp) si se
 quiere contactar.
 
+**Aviso anual (batch 19, parte 3):** en la pantalla de Entrega (sección 9),
+justo antes de recoger la firma de salida, hay un checkbox opcional para
+que el cliente acepte que se le avise cuando toque la próxima revisión
+(aproximadamente en 12 meses) — se guarda en el propio vehículo
+(`vehiculos.aviso_anual_aceptado`) y aquí aparece una etiqueta "Aviso anual
+activado" junto a los vehículos que lo tienen aceptado. **Importante:** esto
+NO manda ningún email/WhatsApp automático por sí solo — la app no tiene
+ningún proceso en segundo plano/programado — es solo una marca para saber a
+qué clientes avisar a mano (o para conectar en el futuro con un envío
+automático real, por ejemplo un cron externo que llame a una Edge Function).
+
 ## 19. Notificaciones en tiempo real
 
 La pestaña "Solicitud de cita" (sección 30) y su aviso numérico en la barra
@@ -763,17 +796,39 @@ El precio por hora (`coches_repuesto.precio_hora`, null = no se cobra) es
 solo informativo por ahora — de cara al futuro, para poder facturar el
 préstamo si el taller decide cobrarlo.
 
-La disponibilidad de cada coche (**Libre** o **Prestado**, con la
-matrícula del cliente y la fecha desde la que lo tiene) no se guarda a
-mano en ningún sitio: se calcula sola comprobando si alguna orden de
-trabajo lo tiene asignado sin devolver todavía. Asignar o devolver un coche concreto a un cliente no se
-hace desde "Flota", sino desde la propia tarjeta de la orden en el Panel
-de gestión (visible mientras el vehículo del cliente está físicamente en
-el taller: Recepcionado, En proceso o Listo): un botón **"Coche de
-sustitución"** abre un modal con los coches libres de la flota para
-elegir uno, y una vez asignado la tarjeta muestra su matrícula con un
-botón **"Devuelto"** para cerrar el préstamo cuando el cliente lo trae de
+La disponibilidad de cada coche (**Libre** o **Prestado**, con el nombre y
+matrícula del cliente, la fecha desde la que lo tiene y, si se indicó, la
+**fecha prevista de devolución**) no se guarda a mano en ningún sitio: se
+calcula sola comprobando si alguna orden de trabajo lo tiene asignado sin
+devolver todavía. Asignar un coche concreto a un cliente se puede hacer de
+dos formas (el resultado final es el mismo, solo cambia desde qué pantalla
+se empieza):
+
+- Desde la propia tarjeta de la orden en el Panel de gestión (visible
+  mientras el vehículo del cliente está físicamente en el taller:
+  Recepcionado, En proceso o Listo): un botón **"Coche de sustitución"**
+  (solo visible para dueño/encargado/admin — batch 19, parte 3, ver más
+  abajo) abre un modal con los coches libres de la flota para elegir uno, y
+  una fecha/hora prevista de devolución opcional.
+- Desde la propia pestaña "Flota" (batch 19, parte 3): cada coche libre
+  tiene un botón **"Enlazar a una orden"** (icono de cadena) que abre el
+  modal en sentido contrario — elegir, entre las órdenes activas que
+  todavía no tienen coche de sustitución asignado, a cuál prestárselo.
+
+Una vez asignado, la tarjeta de la orden muestra la matrícula del coche de
+sustitución, el nombre del cliente y (si se indicó) la fecha prevista de
+devolución, con un botón **"Devuelto"** para cerrar el préstamo cuando el
+cliente lo trae de vuelta — devolver un préstamo, a diferencia de
+prestarlo, no está restringido: cualquier personal puede recibirlo de
 vuelta.
+
+**Restricción de quién puede prestar (batch 19, parte 3):** a petición del
+usuario, solo dueño/encargado/admin pueden iniciar un préstamo nuevo (ni
+mecánico ni recepcionista ven el botón) — esto es una restricción **solo de
+interfaz**, igual que ya se hacía con el botón de Presupuesto: no hay
+ninguna política RLS nueva que lo impida a nivel de base de datos (ver nota
+en `supabase/batch19_parte3_migration.sql` si en algún momento hiciera
+falta añadirla).
 
 ## 25. Presupuesto / factura interna
 
@@ -817,21 +872,36 @@ peticiones de red (ver sección 12).
 
 ## 26. Agenda (citas de recogida y de check-in)
 
-Pestaña **"Agenda"**, visible para cualquier personal, con una lista
-cronológica (agrupada por día) de:
+Pestaña **"Agenda"**, visible para cualquier personal, con las citas de:
 
-- Las citas de **recogida** ya concertadas por el taller al marcar una
-  orden como "Listo" (lo que antes solo se veía en la propia tarjeta del
-  Panel de gestión).
-- Las citas de **check-in** que el cliente propone al pedir un servicio
-  desde el Portal — un nuevo campo opcional de fecha/hora en el formulario
-  de solicitud (`solicitudes.fecha_cita_checkin`), con la misma sencillez
-  que la cita de recogida: una propuesta, sin gestión de franjas horarias
-  ni de aforo. El personal la ve también en **Solicitud de cita** (sección
-  30), y puede confirmarla o proponer otra por teléfono si no encaja.
+- **Recogida**, ya concertadas por el taller al marcar una orden como
+  "Listo" (lo que antes solo se veía en la propia tarjeta del Panel de
+  gestión).
+- **Check-in**, propuestas por el cliente al pedir un servicio desde el
+  Portal (`solicitudes.fecha_cita_checkin`) o acordadas por el personal al
+  aceptar una solicitud en **Solicitud de cita** (sección 30 — ver más
+  abajo, batch 19 parte 3).
 
-No sustituye ningún calendario externo — es una vista de solo lectura
-pensada para ver de un vistazo qué se espera cada día.
+Dos vistas, con un botón para cambiar entre ellas (**Mes** es la vista por
+defecto):
+
+- **Mes** (batch 19, parte 3): un calendario mensual con navegación
+  mes a mes, donde cada día se pinta de un color según cuántas citas tiene
+  ese día — **verde** = sin ninguna cita, **naranja** = alguna cita pero por
+  debajo de las horas laborables asumidas, **rojo** = tantas o más citas
+  que horas laborables asumidas ("día completo"). **Importante — esto es
+  una ESTIMACIÓN, no una gestión real de franjas/aforo:** la app no tiene
+  ninguna configuración de horario del taller, así que el color se calcula
+  asumiendo 8 horas laborables al día y 1 hora por cita (una única
+  constante en `AgendaPanel.tsx`, fácil de ajustar si el horario real del
+  taller es muy distinto). Al tocar un día se ve debajo el detalle de sus
+  citas.
+- **Lista**: la vista cronológica original, agrupada por día, con el filtro
+  "Solo próximas" — se mantiene por si la estimación por colores de la
+  vista Mes no encaja con cómo trabaja el taller.
+
+No sustituye ningún calendario externo — sigue siendo una vista de solo
+lectura pensada para ver de un vistazo qué se espera cada día.
 
 ## 27. Panel de estadísticas
 
@@ -894,6 +964,16 @@ La pestaña de navegación muestra un aviso numérico con las solicitudes
 pendientes de revisar (cualquiera que sea su origen), en tiempo real vía
 Supabase Realtime.
 
+**Horario acordado con la última palabra del mecánico (batch 19, parte
+3):** tanto en "Pendientes de revisar" como al aceptar, hay un campo de
+fecha/hora ya prellenado con lo que el cliente propuso (si propuso algo) —
+pero el personal puede cambiarlo antes de pulsar "Aceptar", y ese es el que
+se guarda de verdad en `fecha_cita_checkin` (y por tanto el que aparece en
+la Agenda, sección 26): la propuesta del cliente es solo un punto de
+partida, no vincula. Una solicitud ya aceptada sin horario fijado (o que
+haya que cambiar más adelante) también se puede fijar/editar después, desde
+"Ya revisadas", con un botón "Guardar" aparte.
+
 ## 31. Próximos pasos sugeridos (fuera de este MVP)
 
 - Panel de gestión con calendario visual completo (`@fullcalendar/react`)
@@ -905,28 +985,6 @@ Supabase Realtime.
 - Historial de kilometraje real por vehículo (por ejemplo, pidiéndolo en
   cada visita) para que "Próximas revisiones" deje de depender de una
   estimación.
-- Agenda en vista mensual tipo calendario con un color por día (verde =
-  libre, naranja = algunas horas libres, rojo = día ocupado), en vez de la
-  lista cronológica actual (sección 26).
-- Al aceptar una "Solicitud de cita" (sección 30), un botón para añadirla a
-  la Agenda automáticamente con el horario propuesto — con la última
-  palabra siempre del mecánico/encargado antes de confirmarlo.
-- Préstamo de coche de sustitución: mostrar en la propia asignación el día
-  y hora previstos de devolución y el nombre del cliente (hoy solo se ve la
-  matrícula y desde cuándo), restringir quién puede prestar uno a
-  dueño/encargado, y un botón para "enlazar" el coche de sustitución
-  directamente a la orden de reparación del vehículo que lo pide desde la
-  propia Flota (sección 24).
-- Aviso automático anual (opcional, con un botón de aceptar junto a la
-  firma de salida) para que el cliente reciba un recordatorio de revisión
-  un año después de pasar por el taller.
-- Datalist con fabricantes y modelos de vehículo reales (dependiente del
-  fabricante elegido), tipo de combustible, año del modelo y prestaciones
-  del motor — manteniendo marca/modelo como campos obligatorios y dejando
-  siempre la opción de escribir un valor que no esté en la lista.
-- Selector de medida de neumático por datalist (ancho/perfil/llanta/índice
-  de carga/índice de velocidad/estación), además de la foto actual, al
-  estilo de buscadores de neumáticos como el de Vulco.
 - De cara a más adelante: modelo de suscripción por mensualidad, y qué
   implicaría dar servicio a varios talleres distintos desde la misma app
   (aislar la base de datos de cada uno).

@@ -28,6 +28,9 @@ interface FilaOrden {
     matricula: string;
     marca: string | null;
     modelo: string | null;
+    // Aviso anual (batch 19, parte 3) — aceptado por el cliente junto a la
+    // firma de salida en una entrega anterior (ver CheckoutForm.tsx).
+    aviso_anual_aceptado: boolean;
     clientes: { nombre: string; telefono: string } | null;
   } | null;
   inspecciones_entrada: { kilometraje: number }[] | null;
@@ -46,11 +49,12 @@ interface VehiculoRevision {
   kmEstimadoActual: number | null;
   tocaPorTiempo: boolean;
   tocaPorKm: boolean;
+  avisoAnualAceptado: boolean;
 }
 
 const SELECT_ULTIMA_VISITA =
   'vehiculo_id, fecha_entrada, estado, ' +
-  'vehiculos(matricula, marca, modelo, clientes(nombre, telefono)), ' +
+  'vehiculos(matricula, marca, modelo, aviso_anual_aceptado, clientes(nombre, telefono)), ' +
   'inspecciones_entrada(kilometraje)';
 
 /**
@@ -136,6 +140,7 @@ export default function ProximasRevisiones() {
         kmEstimadoActual,
         tocaPorTiempo,
         tocaPorKm,
+        avisoAnualAceptado: fila.vehiculos?.aviso_anual_aceptado ?? false,
       });
     }
 
@@ -206,6 +211,11 @@ export default function ProximasRevisiones() {
                   {v.tocaPorKm && (
                     <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-700">
                       Por km
+                    </span>
+                  )}
+                  {v.avisoAnualAceptado && (
+                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                      Aviso anual activado
                     </span>
                   )}
                 </div>

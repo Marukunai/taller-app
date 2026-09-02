@@ -64,6 +64,21 @@ export interface Vehiculo {
   // libre, ej. "Rojo", "Gris plata") — se usa para distinguirlo de un
   // vistazo en el Panel de gestión y en la Entrega.
   color: string | null;
+  // Añadidos en el batch 19 (parte 3) — todos opcionales (a diferencia de
+  // marca/modelo, que siguen siendo obligatorios): tipo de combustible, año
+  // del modelo y prestaciones del motor, rellenados con ayuda de un
+  // `<datalist>` en el Check-in (ver src/lib/vehicleData.ts) que siempre
+  // admite escribir un valor que no esté en la lista.
+  combustible: string | null;
+  anio: number | null;
+  motor: string | null;
+  // "Aviso anual" opcional: el cliente acepta (con un botón junto a la
+  // firma de salida en la Entrega, ver CheckoutForm.tsx) que se le avise
+  // aproximadamente en 12 meses de que toca la próxima revisión. No hay
+  // ningún envío automático programado todavía (la app no tiene ningún
+  // proceso en segundo plano) — de momento solo queda marcado aquí para que
+  // "Próximas revisiones" pueda destacar qué vehículos lo han aceptado.
+  aviso_anual_aceptado: boolean;
   cliente_id: string;
 }
 
@@ -104,6 +119,21 @@ export interface OrdenTrabajo {
   coche_repuesto_id: string | null;
   fecha_prestamo_repuesto: string | null;
   fecha_devolucion_repuesto: string | null;
+  // Fecha/hora PREVISTA de devolución del coche de sustitución (batch 19,
+  // parte 3) — opcional, se rellena al prestarlo (ver AsignarRepuestoModal)
+  // para poder avisar con antelación si se pasa la fecha; no se usa para
+  // nada automático, solo se muestra en Flota/Panel de gestión.
+  fecha_devolucion_repuesto_prevista: string | null;
+  // Medida del neumático (batch 19, parte 3) — solo tiene sentido cuando
+  // tipo_servicio = 'neumaticos', y es opcional: la foto de arriba
+  // (neumaticos_foto_url) sigue siendo suficiente por sí sola. Se rellena
+  // con ayuda de un `<datalist>` (ver src/lib/vehicleData.ts).
+  neumatico_ancho: string | null;
+  neumatico_perfil: string | null;
+  neumatico_llanta: string | null;
+  neumatico_indice_carga: string | null;
+  neumatico_indice_velocidad: string | null;
+  neumatico_estacion: string | null;
 }
 
 export interface InspeccionEntrada {

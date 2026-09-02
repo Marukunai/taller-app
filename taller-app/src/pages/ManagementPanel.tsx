@@ -102,6 +102,9 @@ interface OrdenPanel {
   } | null;
   coche_repuesto_id: string | null;
   fecha_devolucion_repuesto: string | null;
+  // Fecha prevista de devolución (batch 19, parte 3) — opcional, se rellena
+  // al asignar el coche desde AsignarRepuestoModal.
+  fecha_devolucion_repuesto_prevista: string | null;
   coches_repuesto: { matricula: string; marca: string | null; modelo: string | null } | null;
   solicitud_id: string | null;
 }
@@ -135,7 +138,8 @@ const SELECT_ORDENES =
   'vehiculos(matricula, marca, modelo, color, clientes(nombre, telefono, email)), ' +
   'inspecciones_entrada(fotos_urls), piezas_usadas(id), ' +
   'solicitudes(nombre_cliente, telefono_cliente, email_cliente, matricula, marca, modelo), ' +
-  'coche_repuesto_id, fecha_devolucion_repuesto, coches_repuesto(matricula, marca, modelo), solicitud_id';
+  'coche_repuesto_id, fecha_devolucion_repuesto, fecha_devolucion_repuesto_prevista, ' +
+  'coches_repuesto(matricula, marca, modelo), solicitud_id';
 
 /**
  * Tablero de órdenes de trabajo agrupadas por estado, con un botón por
@@ -458,8 +462,25 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                                     <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                                     <span className="break-words">
                                       Sustitución: {orden.coches_repuesto?.matricula ?? '—'}
+                                      {clienteNombre ? ` · ${clienteNombre}` : ''}
                                     </span>
                                   </span>
+                                  {orden.fecha_devolucion_repuesto_prevista && (
+                                    <span className="mt-0.5 block text-[11px] text-blue-600">
+                                      Devolución prevista:{' '}
+                                      {new Date(orden.fecha_devolucion_repuesto_prevista).toLocaleDateString(
+                                        'es-ES',
+                                      )}{' '}
+                                      {new Date(orden.fecha_devolucion_repuesto_prevista).toLocaleTimeString(
+                                        'es-ES',
+                                        { hour: '2-digit', minute: '2-digit' },
+                                      )}
+                                    </span>
+                                  )}
+                                  {/* Devolver el préstamo queda al alcance de cualquier
+                                      personal (no solo esEncargado) — es una acción
+                                      "cerrar", no "prestar", y cualquiera puede
+                                      recibir de vuelta el coche de sustitución. */}
                                   <button
                                     type="button"
                                     onClick={() => marcarRepuestoDevuelto(orden)}
@@ -475,13 +496,19 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                                   </button>
                                 </div>
                               ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setRepuestoModal(orden)}
-                                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                                >
-                                  <Truck className="h-3.5 w-3.5" /> Coche de sustitución
-                                </button>
+                                // Prestar un coche de sustitución, a diferencia de
+                                // devolverlo, se restringe a dueño/encargado/admin
+                                // (petición explícita del usuario) — solo a nivel de
+                                // interfaz, ver nota en batch19_parte3_migration.sql.
+                                esEncargado && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRepuestoModal(orden)}
+                                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                                  >
+                                    <Truck className="h-3.5 w-3.5" /> Coche de sustitución
+                                  </button>
+                                )
                               ))}
 
                             {orden.estado === 'solicitado' && onRecibirDesdeSolicitud ? (
@@ -601,6 +628,9 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
         open={repuestoModal !== null}
         ordenId={repuestoModal?.id ?? null}
         matriculaCliente={repuestoModal?.vehiculos?.matricula ?? repuestoModal?.solicitudes?.matricula ?? '—'}
+        clienteNombre={
+          repuestoModal?.vehiculos?.clientes?.nombre ?? repuestoModal?.solicitudes?.nombre_cliente ?? null
+        }
         onClose={() => setRepuestoModal(null)}
         onAsignado={() => {
           setRepuestoModal(null);
