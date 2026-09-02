@@ -387,17 +387,23 @@ en la tabla `perfiles`. Desde el batch 19 hay seis roles posibles, en
 jerarquía:
 
 - **`admin`** — cuenta de arranque, **se crea solo por SQL directo** (nunca
-  desde la app, ver sección 2 y el propio `roles_v2_migration.sql`). No ve
-  Check-in, Panel de gestión ni ningún dato de clientes: al iniciar sesión
-  solo ve la pantalla de **Gestión de personal**, para poder crear al
-  primer `dueno` del taller (o uno nuevo si hiciera falta en el futuro).
-  Piensa en ella como una "llave maestra" de emergencia, no como una cuenta
-  de uso diario.
+  desde la app, ver sección 2 y el propio `roles_v2_migration.sql`). Ve y
+  puede hacer TODO lo mismo que un `dueno` (Check-in, Panel de gestión,
+  todos los datos, **Gestión de personal** incluida) — a petición
+  explícita del usuario, no es una pantalla reducida. La única diferencia
+  real es que la propia cuenta `admin` no se puede gestionar (editar,
+  desactivar, eliminar) desde Gestión de personal salvo que sea ella misma
+  quien lo haga, y que nunca aparece en el listado de esa pantalla ni es
+  un rol asignable a otra cuenta desde la app — pensada sobre todo para
+  poder crear al primer `dueno` del taller (o uno nuevo si hiciera falta
+  en el futuro) sin depender de que exista ya una cuenta `dueno` activa.
 - **`dueno`** — gestiona el taller entero: todo lo que puede hacer un
   `encargado` (ver abajo) MÁS **Gestión de personal** completa — crear,
   editar (incluido el rol), desactivar o eliminar CUALQUIER cuenta de
-  personal, incluidos otros dueños o encargados. Es el rol con más
-  permisos operativos del día a día.
+  personal, incluidos otros dueños o encargados (un dueño puede crear otro
+  dueño; de momento no hay ninguna restricción adicional sobre esto, es
+  algo a revisar más adelante si hace falta). Es el rol con más permisos
+  operativos del día a día.
 - **`encargado`** — mismo acceso operativo que siempre: Check-in, Panel de
   gestión, Entrega, Historial, Próximas revisiones, Agenda, **Inventario**,
   **Flota** y **Estadísticas**. Desde el batch 19 **ya NO ve Gestión de

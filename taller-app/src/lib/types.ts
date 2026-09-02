@@ -184,12 +184,17 @@ export interface CocheRepuesto {
 
 /** Rol de una cuenta de Supabase Auth — jerarquía desde el batch 19:
  *  'admin' es una cuenta de arranque (se crea a mano por SQL, nunca desde la
- *  app) que solo sirve para crear al primer 'dueno' — no ve check-in, panel
- *  ni ningún dato de clientes, solo la pantalla de Gestión de personal;
+ *  app) pensada sobre todo para crear al primer 'dueno' — pero ve y puede
+ *  hacer TODO lo mismo que un 'dueno' (check-in, panel, todos los datos,
+ *  Gestión de personal incluida), a petición explícita del usuario; la
+ *  única diferencia real de 'admin' es que su propia cuenta no se puede
+ *  gestionar (editar/desactivar/eliminar) desde Gestión de personal salvo
+ *  que sea ella misma, y que nunca aparece en la lista de cuentas de esa
+ *  pantalla ni es asignable a otra cuenta desde la app;
  *  'dueno' gestiona el taller entero: todo lo que puede hacer un
  *  'encargado' además de crear/editar/desactivar/eliminar CUALQUIER cuenta
- *  de personal (incluidos otros encargados) desde Gestión de personal —
- *  antes esto lo hacía el 'encargado', ya no; 'encargado' tiene el mismo
+ *  de personal (incluidos otros encargados, y otros dueños) desde Gestión
+ *  de personal — antes esto lo hacía el 'encargado', ya no; 'encargado' tiene el mismo
  *  acceso operativo de siempre (inventario, precios, presupuestos, flota,
  *  estadísticas) pero YA NO ve Gestión de personal; 'mecanico' es personal
  *  del taller con acceso a check-in/panel/entrega/inventario en solo

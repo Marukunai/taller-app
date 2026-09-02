@@ -228,34 +228,6 @@ function App() {
     );
   }
 
-  // 'admin' es una cuenta de arranque (creada a mano por SQL, ver README) que
-  // solo sirve para crear al primer 'dueno' del taller — no ve check-in, el
-  // panel de gestión, ni ningún dato de clientes: solo Gestión de personal,
-  // para no tener acceso a nada más de lo estrictamente necesario para su
-  // única función.
-  if (perfil.rol === 'admin') {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-blue-50">
-        <nav className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-blue-600 px-4 py-3 shadow-md">
-          <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white">
-              <Wrench className="h-4 w-4" />
-            </span>
-            <span className="font-bold text-white">TallerGo · Administración</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => supabase.auth.signOut()}
-            className="rounded-lg px-3 py-1.5 text-sm font-medium text-white/90 hover:bg-white/10"
-          >
-            Cerrar sesión
-          </button>
-        </nav>
-        <PersonnelPanel miId={session.user.id} />
-      </div>
-    );
-  }
-
   // Cuenta de personal desactivada desde "Gestión de personal" (ver
   // PersonnelPanel.tsx) — se comprueba aquí, antes de mostrar nada del
   // resto de la app, aunque la sesión siga siendo técnicamente válida (el
@@ -286,21 +258,20 @@ function App() {
     );
   }
 
-  // A partir de aquí `perfil.rol` ya nunca es 'cliente' ni 'admin' (ambos
-  // casos ya han hecho `return` más arriba) — solo dueno/encargado/
-  // mecanico/recepcionista.
+  // A partir de aquí `perfil.rol` ya nunca es 'cliente' (ya ha hecho
+  // `return` más arriba) — admin/dueno/encargado/mecanico/recepcionista.
   //
-  // Nivel "encargado": encargado Y dueño heredan todo lo que podía hacer un
-  // encargado (inventario, precios, presupuestos, flota, estadísticas) —
-  // ver InventoryPanel.tsx/ManagementPanel.tsx. Gestión de personal es un
-  // nivel aparte, más estrecho, desde el batch 19: ver `esGestionCuentas`
-  // justo debajo.
-  const esEncargado = perfil.rol === 'dueno' || perfil.rol === 'encargado';
-  // Nivel "gestión de cuentas": desde el batch 19, SOLO dueño (o admin,
-  // gestionado en su propia pantalla más arriba) puede crear, editar,
-  // desactivar o eliminar cuentas de personal — un encargado ya no puede
-  // (antes sí). Ver PersonnelPanel.tsx.
-  const esGestionCuentas = perfil.rol === 'dueno';
+  // Nivel "encargado": admin, dueño Y encargado heredan todo lo que podía
+  // hacer un encargado (inventario, precios, presupuestos, flota,
+  // estadísticas) — ver InventoryPanel.tsx/ManagementPanel.tsx. El usuario
+  // pidió explícitamente que admin vea TODA la app (no una pantalla
+  // reducida), así que admin se trata aquí como el nivel más alto, igual
+  // que dueño.
+  const esEncargado = perfil.rol === 'dueno' || perfil.rol === 'encargado' || perfil.rol === 'admin';
+  // Nivel "gestión de cuentas": desde el batch 19, dueño Y admin pueden
+  // crear, editar, desactivar o eliminar cuentas de personal — un
+  // encargado ya no puede (antes sí). Ver PersonnelPanel.tsx.
+  const esGestionCuentas = perfil.rol === 'dueno' || perfil.rol === 'admin';
   // Recepcionista: de cara al cliente (solicitud de cita, agenda, ver
   // pendientes en el panel), pero sin Inventario ni Próximas revisiones —
   // ver la lista de pestañas debajo.
