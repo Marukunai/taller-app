@@ -1140,3 +1140,49 @@ Supabase antes de usar estos cambios.
   alta directamente en litros/kg reales. En instalaciones nuevas (sin datos
   previos), el catálogo semilla de `schema.sql` ya usa litros/kg reales
   desde el principio.
+
+## 34. Batch 22: arreglo de "piezas usadas" + visibilidad del Portal para solicitudes creadas por el personal
+
+Requiere ejecutar **`supabase/batch22_migration.sql`** en el SQL Editor de
+Supabase.
+
+- **Arreglo del error "Could not choose the best candidate function..."**
+  al añadir una pieza usada. Causa real: la migración de decimales creó
+  `registrar_pieza_usada(uuid, uuid, numeric)` con `create or replace`,
+  pero al cambiar el tipo del 3er parámetro (antes `int`) Postgres no
+  reemplaza la función — crea una segunda, y desde entonces coexistían
+  DOS versiones con el mismo nombre, así que cualquier llamada resultaba
+  ambigua. Se borra la versión vieja (`int`) y se deja solo la de
+  `numeric`. Esto explica por qué el error seguía apareciendo aunque ya se
+  hubieran ejecutado todas las migraciones anteriores — no hacía falta
+  "crear items con decimales" de otra forma, era este bug.
+- **El cliente ya ve en su Portal cualquier solicitud/orden, aunque no la
+  haya creado él mismo desde su cuenta.** Antes, si el personal creaba la
+  solicitud directamente (pestaña "Solicitud de cita", o un check-in sin
+  solicitud previa en absoluto), esa solicitud/orden se quedaba sin
+  `cliente_auth_id` para siempre — el cliente, aunque tuviera cuenta del
+  Portal, no tenía forma de verla. Ahora, cuando el nombre/email
+  coinciden con una cuenta de cliente:
+  - Una solicitud creada sin `cliente_auth_id` (por email/teléfono) se
+    vincula sola a la cuenta que tenga ese mismo email.
+  - Un check-in que crea la orden directamente, sin solicitud previa,
+    genera automáticamente una solicitud "aceptada" con los datos del
+    cliente/vehículo (para que la orden tenga algo a lo que estar
+    vinculada), que a su vez se vincula igual que el caso anterior.
+  - Si el cliente **se registra después** de que el personal ya le
+    hubiera creado alguna solicitud, al crear la cuenta se vinculan
+    retroactivamente todas las que coincidan por email — no hace falta
+    que la cuenta exista de antemano.
+  - La comparación de email no distingue mayúsculas/minúsculas.
+  De paso, se llevaron a `schema.sql` (documento de referencia para
+  instalaciones nuevas) las políticas "Cliente ve su propia orden" /
+  "...inspección de entrada" del batch 20, que por despiste se habían
+  quedado solo en `batch20_migration.sql` y nunca se copiaron.
+- **Nombres de item ya no se cortan letra por letra en el Panel de
+  inventario.** Las tarjetas pasaban a 2 columnas en el mismo punto
+  (640px de ancho de viewport) en el que además se ponían en una sola
+  fila horizontal (foto + nombre + controles) — justo la combinación más
+  estrecha, y con los botones ±0.5 nuevos del batch 21 ya no cabía nada.
+  Ahora las 2 columnas y la fila horizontal solo entran en juego a partir
+  de una pantalla más ancha (`lg`, 1024px); por debajo, cada tarjeta va a
+  ancho completo y se apila en dos filas como en móvil.

@@ -175,6 +175,19 @@ begin
   insert into perfiles (id, rol, nombre, email)
   values (new.id, 'cliente', new.raw_user_meta_data->>'full_name', new.email)
   on conflict (id) do nothing;
+
+  -- Batch 22: vincula retroactivamente cualquier solicitud que el
+  -- personal ya le hubiera creado (llamada telefónica, o check-in directo
+  -- sin solicitud previa) antes de que este cliente tuviera cuenta, para
+  -- que le aparezca en su Portal nada más registrarse.
+  if new.email is not null then
+    update solicitudes
+       set cliente_auth_id = new.id
+     where cliente_auth_id is null
+       and email_cliente is not null
+       and lower(email_cliente) = lower(new.email);
+  end if;
+
   return new;
 end;
 $$;
@@ -467,6 +480,72 @@ create policy "Personal Vehículos" on vehiculos
 alter table ordenes_trabajo enable row level security;
 create policy "Personal Ordenes" on ordenes_trabajo
   for all using (es_personal()) with check (es_personal());
+-- El cliente ve su propia orden (batch 20) — por `solicitud_id` +
+-- `solicitudes.cliente_auth_id`, igual que en `presupuestos`.
+drop policy if exists "Cliente ve su propia orden" on ordenes_trabajo;
+create policy "Cliente ve su propia orden" on ordenes_trabajo
+  for select using (
+    solicitud_id is not null
+    and exists (select 1 from solicitudes where id = ordenes_trabajo.solicitud_id and cliente_auth_id = auth.uid())
+  );
+
+-- Batch 22: si el check-in crea la orden directamente, sin haber pasado
+-- antes por una solicitud (ni del Portal ni de "Solicitud de cita"), se le
+-- crea aquí una solicitud "aceptada" a partir de los datos del cliente/
+-- vehículo, para que `vincular_solicitud_cliente_auth` (más abajo) pueda
+-- vincularla a su cuenta si el email coincide — sin esto, un cliente cuyo
+-- vehículo se recepciona directamente en el taller no ve NUNCA nada en su
+-- Portal, porque no hay ninguna solicitud a la que esté ligado.
+create or replace function vincular_orden_solicitud_directa()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_nombre text;
+  v_email text;
+  v_telefono text;
+  v_matricula text;
+  v_marca text;
+  v_modelo text;
+  v_solicitud_id uuid;
+begin
+  if new.solicitud_id is not null or new.vehiculo_id is null then
+    return new;
+  end if;
+
+  select c.nombre, c.email, c.telefono, v.matricula, v.marca, v.modelo
+    into v_nombre, v_email, v_telefono, v_matricula, v_marca, v_modelo
+    from vehiculos v
+    join clientes c on c.id = v.cliente_id
+   where v.id = new.vehiculo_id;
+
+  if v_nombre is null then
+    return new;
+  end if;
+
+  insert into solicitudes (
+    nombre_cliente, email_cliente, telefono_cliente,
+    matricula, marca, modelo, tipo_servicio, descripcion, neumaticos_cantidad,
+    estado, respuesta_taller
+  ) values (
+    v_nombre, v_email, v_telefono,
+    v_matricula, v_marca, v_modelo,
+    new.tipo_servicio, new.descripcion_averia, new.neumaticos_cantidad,
+    'aceptada',
+    'Vehículo recepcionado directamente en el check-in, sin solicitud previa.'
+  )
+  returning id into v_solicitud_id;
+
+  new.solicitud_id := v_solicitud_id;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_vincular_orden_solicitud_directa on ordenes_trabajo;
+create trigger trg_vincular_orden_solicitud_directa
+  before insert on ordenes_trabajo
+  for each row execute function vincular_orden_solicitud_directa();
 
 -- Restringe la ASIGNACIÓN de un coche de sustitución (préstamo) a
 -- dueño/encargado/admin a nivel de BASE DE DATOS, no solo de interfaz —
@@ -507,6 +586,46 @@ create trigger trg_restringir_prestamo_repuesto
 alter table inspecciones_entrada enable row level security;
 create policy "Personal Inspecciones" on inspecciones_entrada
   for all using (es_personal()) with check (es_personal());
+-- El cliente ve su propia inspección de entrada (batch 20).
+drop policy if exists "Cliente ve su propia inspección de entrada" on inspecciones_entrada;
+create policy "Cliente ve su propia inspección de entrada" on inspecciones_entrada
+  for select using (
+    exists (
+      select 1 from ordenes_trabajo o
+      join solicitudes s on s.id = o.solicitud_id
+      where o.id = inspecciones_entrada.orden_id and s.cliente_auth_id = auth.uid()
+    )
+  );
+
+-- Batch 22: si una solicitud se crea (o se le corrige el email) sin
+-- `cliente_auth_id` — "Solicitud de cita" del personal, o la que crea
+-- automáticamente `vincular_orden_solicitud_directa` de arriba — y el
+-- email coincide con una cuenta de cliente ya existente, se vincula sola.
+create or replace function vincular_solicitud_cliente_auth()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_id uuid;
+begin
+  if new.cliente_auth_id is null and new.email_cliente is not null then
+    select id into v_id
+      from perfiles
+     where rol = 'cliente' and lower(email) = lower(new.email_cliente)
+     limit 1;
+    if v_id is not null then
+      new.cliente_auth_id := v_id;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_vincular_solicitud_cliente_auth on solicitudes;
+create trigger trg_vincular_solicitud_cliente_auth
+  before insert or update of email_cliente, cliente_auth_id on solicitudes
+  for each row execute function vincular_solicitud_cliente_auth();
 
 -- Almacenes e inventario: CUALQUIER personal (encargado o mecánico) puede
 -- CONSULTARLOS (un mecánico necesita ver el stock para elegir una pieza
@@ -820,7 +939,7 @@ begin
 end;
 $$;
 
-grant execute on function registrar_pieza_usada(uuid, uuid, int) to authenticated;
+grant execute on function registrar_pieza_usada(uuid, uuid, numeric) to authenticated;
 grant execute on function quitar_pieza_usada(uuid) to authenticated;
 grant execute on function es_personal() to authenticated;
 grant execute on function es_encargado() to authenticated;

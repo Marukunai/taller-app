@@ -720,9 +720,14 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                 </h2>
                 {/* Tarjetas más grandes y en menos columnas que antes: el
                     nombre del item ya no se corta con "..." cuando es
-                    largo — se permite que ocupe 2 líneas en vez de
-                    truncarse en una sola. */}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    largo — se permite que ocupe varias líneas en vez de
+                    truncarse en una sola. 2 columnas a partir de `lg`, no
+                    `sm`: con 2 columnas ya a 640px de ancho de viewport
+                    cada tarjeta se queda demasiado estrecha para el
+                    nombre + los controles de cantidad (más anchos desde
+                    que hay botones ±0.5), y el texto llegaba a partirse
+                    letra por letra. */}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {itemsGrupo.map((item) =>
                     itemEditando === item.id ? (
                       <form
@@ -848,14 +853,16 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                     ) : (
                       <div
                         key={item.id}
-                        // En móvil se apila en dos filas (foto+nombre arriba,
-                        // controles de cantidad/edición abajo, alineados a la
-                        // derecha) en vez de forzar todo en una sola fila: con
-                        // 10 pestañas y controles a la derecha no queda ancho
-                        // suficiente para el nombre y el texto se partía
-                        // letra por letra. A partir de `sm` vuelve a ser una
-                        // sola fila horizontal como antes.
-                        className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:gap-4"
+                        // Se apila en dos filas (foto+nombre arriba, controles de
+                        // cantidad/edición abajo, alineados a la derecha) en
+                        // vez de forzar todo en una sola fila: sin espacio de
+                        // sobra el nombre se queda sin ancho y el texto se
+                        // parte letra por letra. Solo pasa a una sola fila
+                        // horizontal en `lg`, no en `sm` — coincide con el
+                        // breakpoint del grid de 2 columnas de arriba, para
+                        // que nunca coincidan "2 columnas" + "fila única" a
+                        // la vez, que es justo la combinación más estrecha.
+                        className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:gap-4"
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-4">
                         {item.imagen_url ? (
@@ -932,14 +939,14 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                         </div>
                         </div>
                         {!esEncargado ? (
-                          <div className="flex shrink-0 items-center gap-1.5 self-end sm:self-auto">
+                          <div className="flex shrink-0 items-center gap-1.5 self-end lg:self-auto">
                             <span className="rounded-full bg-gray-100 px-3 py-1 text-base font-semibold text-gray-700">
                               {item.cantidad}
                               {sufijoUnidad(item.unidad)}
                             </span>
                           </div>
                         ) : confirmandoBorradoId === item.id ? (
-                          <div className="flex shrink-0 flex-col items-end gap-1 self-end sm:flex-row sm:items-center sm:self-auto">
+                          <div className="flex shrink-0 flex-col items-end gap-1 self-end lg:flex-row lg:items-center lg:self-auto">
                             <span className="text-xs text-gray-500">¿Borrar item?</span>
                             <div className="flex items-center gap-1.5">
                               <button
@@ -960,7 +967,7 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex shrink-0 items-center gap-1.5 self-end sm:self-auto">
+                          <div className="flex shrink-0 items-center gap-1.5 self-end lg:self-auto">
                             <button
                               type="button"
                               onClick={() => ajustarCantidad(item, -1)}
