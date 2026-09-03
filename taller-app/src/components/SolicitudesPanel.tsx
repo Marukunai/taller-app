@@ -1,17 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  Car,
-  CalendarClock,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Loader2,
-  Mail,
-  MessageSquareText,
-  Phone,
-  Save,
-  XCircle,
-} from 'lucide-react';
+import { Car, CalendarClock, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, Save, XCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { EstadoSolicitud, NeumaticosCantidad, Solicitud, TipoServicio } from '../lib/types';
 
@@ -23,6 +11,33 @@ function aDatetimeLocal(iso: string | null): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+type FiltroResueltas = 'hoy' | 'semana' | 'todas';
+
+/** true si `fechaIso` cae en el día de HOY, en hora local. */
+function esHoy(fechaIso: string): boolean {
+  const fecha = new Date(fechaIso);
+  const hoy = new Date();
+  return (
+    fecha.getFullYear() === hoy.getFullYear() &&
+    fecha.getMonth() === hoy.getMonth() &&
+    fecha.getDate() === hoy.getDate()
+  );
+}
+
+/** true si `fechaIso` cae en la semana de lunes a domingo que contiene
+ *  "ahora" — mismo criterio (semana empieza en lunes) que la Agenda
+ *  (`inicioSemana` en AgendaPanel.tsx). */
+function esEstaSemana(fechaIso: string): boolean {
+  const fecha = new Date(fechaIso);
+  const hoy = new Date();
+  const inicioSemana = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  const diaSemana = (inicioSemana.getDay() + 6) % 7; // 0 = lunes ... 6 = domingo
+  inicioSemana.setDate(inicioSemana.getDate() - diaSemana);
+  const finSemana = new Date(inicioSemana);
+  finSemana.setDate(finSemana.getDate() + 7); // lunes de la semana siguiente (exclusivo)
+  return fecha >= inicioSemana && fecha < finSemana;
 }
 
 const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
@@ -213,13 +228,18 @@ export default function SolicitudesPanel() {
   const resueltas = solicitudes.filter((s) => s.estado !== 'pendiente');
 
   // "Ya revisadas" puede acumular muchísimas con el tiempo (o con datos de
-  // prueba) y llenar la pantalla — se muestran solo las más recientes por
-  // defecto (ya vienen ordenadas por fecha de creación descendente, ver
-  // `cargar()`), con un botón para desplegar el resto sin perder acceso a
-  // ellas.
-  const LIMITE_RESUELTAS_INICIAL = 6;
-  const [verTodasResueltas, setVerTodasResueltas] = useState(false);
-  const resueltasMostradas = verTodasResueltas ? resueltas : resueltas.slice(0, LIMITE_RESUELTAS_INICIAL);
+  // prueba) y llenar la pantalla, así que por defecto se filtra a esta
+  // semana — con botones para acotar más ("Hoy") o ver el histórico
+  // completo ("Todas"). El filtro se basa en `created_at` (fecha en que se
+  // creó la solicitud, no hay un campo separado de "fecha de respuesta"),
+  // que en la práctica coincide con cuándo se revisó: las solicitudes se
+  // suelen aceptar/rechazar el mismo día o al siguiente.
+  const [filtroResueltas, setFiltroResueltas] = useState<FiltroResueltas>('semana');
+  const resueltasFiltradas = resueltas.filter((s) => {
+    if (filtroResueltas === 'hoy') return esHoy(s.created_at);
+    if (filtroResueltas === 'semana') return esEstaSemana(s.created_at);
+    return true;
+  });
 
   if (cargando) {
     return (
@@ -301,68 +321,75 @@ export default function SolicitudesPanel() {
 
           {resueltas.length > 0 && (
             <section>
-              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
-                Ya revisadas
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
-                  {resueltas.length}
-                </span>
-              </h2>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {resueltasMostradas.map((s) => (
-                  <div key={s.id} className="space-y-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                    <TarjetaCabecera s={s} />
-                    {s.respuesta_taller && (
-                      <p className="flex items-start gap-1.5 rounded-lg bg-gray-50 px-2.5 py-1.5 text-xs text-gray-600">
-                        <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {s.respuesta_taller}
-                      </p>
-                    )}
-                    {s.estado === 'aceptada' && (
-                      <div className="flex items-end gap-2">
-                        <div className="flex-1">
-                          <label className="mb-1 block text-[11px] font-medium text-gray-500">
-                            {s.fecha_cita_checkin ? 'Cambiar horario en la Agenda' : 'Fijar horario en la Agenda'}
-                          </label>
-                          <input
-                            type="datetime-local"
-                            value={fechasCita[s.id] ?? aDatetimeLocal(s.fecha_cita_checkin)}
-                            onChange={(e) => setFechasCita((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                            className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => actualizarFechaCita(s)}
-                          disabled={guardandoFechaId === s.id || !fechasCita[s.id]}
-                          className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
-                        >
-                          {guardandoFechaId === s.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Save className="h-3.5 w-3.5" />
-                          )}
-                          Guardar
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  Ya revisadas
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                    {resueltasFiltradas.length}
+                  </span>
+                </h2>
+                <div className="flex rounded-xl border border-gray-300 bg-white p-0.5 shadow-sm">
+                  {(['hoy', 'semana', 'todas'] as const).map((opcion) => (
+                    <button
+                      key={opcion}
+                      type="button"
+                      onClick={() => setFiltroResueltas(opcion)}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                        filtroResueltas === opcion
+                          ? 'bg-indigo-100 text-indigo-700'
+                          : 'text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {opcion === 'hoy' ? 'Hoy' : opcion === 'semana' ? 'Esta semana' : 'Todas'}
+                    </button>
+                  ))}
+                </div>
               </div>
-              {resueltas.length > LIMITE_RESUELTAS_INICIAL && (
-                <button
-                  type="button"
-                  onClick={() => setVerTodasResueltas((v) => !v)}
-                  className="mt-3 flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50"
-                >
-                  {verTodasResueltas ? (
-                    <>
-                      <ChevronUp className="h-3.5 w-3.5" /> Ver menos
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown className="h-3.5 w-3.5" /> Ver todas ({resueltas.length})
-                    </>
-                  )}
-                </button>
+              {resueltasFiltradas.length === 0 ? (
+                <p className="text-xs text-gray-400">
+                  No hay solicitudes revisadas {filtroResueltas === 'hoy' ? 'hoy' : 'esta semana'}.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {resueltasFiltradas.map((s) => (
+                    <div key={s.id} className="space-y-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                      <TarjetaCabecera s={s} />
+                      {s.respuesta_taller && (
+                        <p className="flex items-start gap-1.5 rounded-lg bg-gray-50 px-2.5 py-1.5 text-xs text-gray-600">
+                          <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {s.respuesta_taller}
+                        </p>
+                      )}
+                      {s.estado === 'aceptada' && (
+                        <div className="flex items-end gap-2">
+                          <div className="flex-1">
+                            <label className="mb-1 block text-[11px] font-medium text-gray-500">
+                              {s.fecha_cita_checkin ? 'Cambiar horario en la Agenda' : 'Fijar horario en la Agenda'}
+                            </label>
+                            <input
+                              type="datetime-local"
+                              value={fechasCita[s.id] ?? aDatetimeLocal(s.fecha_cita_checkin)}
+                              onChange={(e) => setFechasCita((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                              className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => actualizarFechaCita(s)}
+                            disabled={guardandoFechaId === s.id || !fechasCita[s.id]}
+                            className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
+                          >
+                            {guardandoFechaId === s.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Save className="h-3.5 w-3.5" />
+                            )}
+                            Guardar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </section>
           )}

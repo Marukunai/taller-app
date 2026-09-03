@@ -1251,8 +1251,15 @@ consultaba (las citas de la Agenda).
   (p. ej. un vehículo de flota). Ahora el umbral es de solo 1 hora — lo
   justo para evitar un ritmo "infinito" si dos lecturas quedaran casi
   simultáneas, sin excluir visitas del mismo día.
-- **"Ya revisadas" del Panel de solicitudes limitado a las últimas 6**
-  (`SolicitudesPanel.tsx`), con un botón "Ver todas (N)" para desplegar el
-  resto — antes se listaban TODAS sin límite, y con muchas solicitudes ya
-  respondidas (o datos de prueba) la pantalla se llenaba sin necesidad,
-  cuando lo habitual es solo querer ver las últimas.
+- **"Ya revisadas" del Panel de solicitudes con filtro de fecha**
+  (`SolicitudesPanel.tsx`): botones **Hoy** / **Esta semana** / **Todas**
+  arriba de la lista (por defecto, "Esta semana") — antes se listaban
+  TODAS sin límite, y con muchas solicitudes ya respondidas (o datos de
+  prueba) la pantalla se llenaba sin necesidad. El filtro usa la fecha de
+  creación de la solicitud (no hay un campo separado de "fecha de
+  respuesta"), que en la práctica coincide con cuándo se revisó.
+- **Pendiente para más adelante (a petición del usuario, no urgente):**
+  la app de momento solo contempla vehículos tipo coche — falta pensar
+  cómo encajar motos (matrículas con otro formato, tipos de servicio/
+  piezas distintos, quizá campos de inspección diferentes) en todo el
+  flujo: check-in, inventario, presupuestos, etc.
