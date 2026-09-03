@@ -26,6 +26,16 @@ const KM_ANUALES_ESTIMADOS = 15000;
  *  calcular un ritmo propio del vehículo en vez de usar `KM_ANUALES_ESTIMADOS`. */
 const MIN_LECTURAS_PARA_HISTORIAL_REAL = 2;
 
+/** Separación mínima (en horas) entre la primera y la última lectura para
+ *  fiarse del ritmo que sale de dividir km entre tiempo — evita un
+ *  resultado disparatado (ritmo "infinito") si dos entradas quedaran
+ *  registradas casi en el mismo instante (p. ej. un doble envío accidental
+ *  del formulario). NO exige que las lecturas sean de días distintos: dos
+ *  visitas el mismo día, separadas por unas horas, son una señal real (un
+ *  vehículo de flota puede hacer miles de km en un solo día) y deben
+ *  contar igual que si estuvieran en fechas distintas. */
+const HORAS_MINIMAS_ENTRE_LECTURAS = 1;
+
 interface FilaOrden {
   vehiculo_id: string;
   fecha_entrada: string | null;
@@ -137,9 +147,9 @@ export default function ProximasRevisiones() {
 
   /** Ritmo anual (km/año) de un vehículo a partir de su historial real:
    *  compara la primera y la última lectura conocidas. Si hay menos de 2
-   *  lecturas, o las fechas/km no son coherentes (mismo día, o kilometraje
-   *  que "baja" por un error de tecleo), se usa el valor genérico de
-   *  respaldo en su lugar. */
+   *  lecturas, están separadas por menos de `HORAS_MINIMAS_ENTRE_LECTURAS`,
+   *  o el kilometraje "baja" entre ellas (error de tecleo), se usa el
+   *  valor genérico de respaldo en su lugar. */
   const ritmoAnualVehiculo = useCallback((vehiculoId: string): { kmAnual: number; real: boolean; numLecturas: number } => {
     const historial = historialKmPorVehiculo.get(vehiculoId) ?? [];
     if (historial.length >= MIN_LECTURAS_PARA_HISTORIAL_REAL) {
@@ -147,7 +157,7 @@ export default function ProximasRevisiones() {
       const ultima = historial[historial.length - 1];
       const dias = (ultima.fecha - primera.fecha) / (1000 * 60 * 60 * 24);
       const km = ultima.km - primera.km;
-      if (dias >= 1 && km >= 0) {
+      if (dias * 24 >= HORAS_MINIMAS_ENTRE_LECTURAS && km >= 0) {
         return { kmAnual: Math.round((km * 365) / dias), real: true, numLecturas: historial.length };
       }
     }

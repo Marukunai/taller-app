@@ -50,6 +50,12 @@ const SELECT_ORDENES_HISTORIAL =
  *  ProximasRevisiones.tsx (batch 23), aunque aquí es solo informativo. */
 const MIN_LECTURAS_PARA_RITMO_REAL = 2;
 
+/** Separación mínima (en horas) entre la primera y la última lectura para
+ *  fiarse del ritmo — igual criterio y mismo motivo que en
+ *  ProximasRevisiones.tsx: solo evita un ritmo "infinito" por dos lecturas
+ *  casi simultáneas, no exige que sean de días distintos. */
+const HORAS_MINIMAS_ENTRE_LECTURAS = 1;
+
 interface HistorialVehiculoProps {
   /** Matrícula a buscar automáticamente al montar — se rellena desde el
    *  Buscador global de la barra de navegación (ver BuscadorGlobal.tsx),
@@ -135,7 +141,7 @@ export default function HistorialVehiculo({ matriculaInicial }: HistorialVehicul
     const ultima = lecturas[lecturas.length - 1];
     const dias = (ultima.fecha - primera.fecha) / (1000 * 60 * 60 * 24);
     const km = ultima.km - primera.km;
-    if (dias < 1 || km < 0) return null;
+    if (dias * 24 < HORAS_MINIMAS_ENTRE_LECTURAS || km < 0) return null;
     return {
       kmAnual: Math.round((km * 365) / dias),
       dias: Math.round(dias),
