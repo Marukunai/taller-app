@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import {
   Calendar,
   CalendarClock,
@@ -10,9 +11,12 @@ import {
   Loader2,
   Phone,
   RefreshCw,
+  Settings,
   Truck,
+  X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { TipoServicio } from '../lib/types';
 
 type TipoCita = 'checkin' | 'recogida';
 
@@ -20,6 +24,7 @@ interface EventoAgenda {
   id: string;
   tipo: TipoCita;
   fecha: string;
+  tipoServicio: TipoServicio | null;
   matricula: string | null;
   marcaModelo: string;
   clienteNombre: string;
@@ -74,23 +79,63 @@ function celdasDelMes(mesActual: Date): Date[] {
   return celdas;
 }
 
-/** Horas laborables asumidas por día, para estimar cuánto de "lleno" está —
- *  la app no tiene ninguna configuración real de horario del taller ni de
- *  franjas/aforo (decisión explícita de mantenerlo simple, ver comentario
- *  original de este archivo), así que esto es una ESTIMACIÓN a ojo: 8 horas
- *  al día y 1 hora por cita. Si un taller real tiene un horario muy distinto
- *  esto se puede ajustar aquí (una sola constante). */
-const HORAS_LABORABLES_DIA = 8;
+/** Horario de apertura asumido (batch 19, parte 4 — confirmado por el
+ *  usuario: horario continuo, sin descanso a mediodía). `HORA_CIERRE` es
+ *  EXCLUSIVO: con 8/20 la última franja mostrada es 19:00–20:00. Si el
+ *  horario real del taller cambia, basta con ajustar estas dos constantes
+ *  (la app sigue sin tener una pantalla de configuración de horario). */
+const HORA_APERTURA = 8;
+const HORA_CIERRE = 20;
+
+/** Duración asumida de una cita según el tipo de servicio — la app no
+ *  guarda ninguna duración real (solo la hora de inicio), así que esto es
+ *  una ESTIMACIÓN propia razonable (confirmado por el usuario que debía
+ *  depender del tipo de servicio, delegando en mí los minutos concretos):
+ *  revisar y ajustar si no encaja con la duración real de cada servicio en
+ *  este taller. */
+const DURACION_MINUTOS_POR_SERVICIO: Record<TipoServicio, number> = {
+  mantenimiento: 60,
+  neumaticos: 45,
+  pre_itv: 30,
+  averia: 90,
+};
+const DURACION_MINUTOS_DEFECTO = 60;
+
+function duracionMinutos(evento: EventoAgenda): number {
+  return evento.tipoServicio ? DURACION_MINUTOS_POR_SERVICIO[evento.tipoServicio] : DURACION_MINUTOS_DEFECTO;
+}
+
+/** Devuelve las horas en punto (enteros) que ocupa una cita dado su inicio
+ *  real y su duración estimada — una cita que empieza a las 10:30 y dura 60
+ *  minutos ocupa las franjas de las 10:00 y de las 11:00. */
+function horasOcupadas(fecha: Date, duracionMin: number): number[] {
+  const inicioMin = fecha.getHours() * 60 + fecha.getMinutes();
+  const finMin = inicioMin + duracionMin;
+  const horas: number[] = [];
+  for (let h = Math.floor(inicioMin / 60); h < Math.ceil(finMin / 60); h++) {
+    horas.push(h);
+  }
+  return horas;
+}
 
 type ColorDia = 'libre' | 'parcial' | 'lleno';
 
-/** Verde = sin ninguna cita ese día, naranja = alguna cita pero por debajo
- *  de las horas laborables asumidas, rojo = tantas o más citas que horas
- *  laborables asumidas (día "lleno" según la estimación). */
-function colorDia(numEventos: number): ColorDia {
-  if (numEventos === 0) return 'libre';
-  if (numEventos < HORAS_LABORABLES_DIA) return 'parcial';
-  return 'lleno';
+/** Verde = ninguna franja horaria del horario de apertura tiene ninguna
+ *  cita, rojo = TODAS las franjas están a plazas completas (tantas citas
+ *  simultáneas como `plazas`), naranja = cualquier otra situación
+ *  intermedia. `porHora` viene de `ocupacionPorDia` (mapa hora→nº de citas
+ *  que la ocupan a la vez, contando la duración estimada de cada una). */
+function colorDia(porHora: Map<number, number> | undefined, plazas: number): ColorDia {
+  if (!porHora || porHora.size === 0) return 'libre';
+  let hayAlgunaCita = false;
+  let todasLasFranjasCompletas = true;
+  for (let h = HORA_APERTURA; h < HORA_CIERRE; h++) {
+    const ocupadas = porHora.get(h) ?? 0;
+    if (ocupadas > 0) hayAlgunaCita = true;
+    if (ocupadas < plazas) todasLasFranjasCompletas = false;
+  }
+  if (!hayAlgunaCita) return 'libre';
+  return todasLasFranjasCompletas ? 'lleno' : 'parcial';
 }
 
 const ESTILO_COLOR_DIA: Record<ColorDia, string> = {
@@ -105,6 +150,12 @@ const PUNTO_COLOR_DIA: Record<ColorDia, string> = {
   lleno: 'bg-red-400',
 };
 
+const ESTILO_FRANJA: Record<ColorDia, string> = {
+  libre: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  parcial: 'border-amber-200 bg-amber-50 text-amber-800',
+  lleno: 'border-red-200 bg-red-50 text-red-800',
+};
+
 /**
  * Agenda unificada de citas: combina las citas de RECOGIDA (concertadas por
  * el taller al marcar una orden "Listo") con las citas de CHECK-IN
@@ -115,12 +166,24 @@ const PUNTO_COLOR_DIA: Record<ColorDia, string> = {
  * falta restringirla como Inventario o Presupuestos.
  *
  * Vista por defecto: calendario MENSUAL con un color por día (verde/
- * naranja/rojo, ver `colorDia` — una ESTIMACIÓN, no una gestión real de
- * franjas/aforo) — batch 19, parte 3, a petición del usuario. La lista
- * cronológica original se mantiene como una segunda vista ("Lista"), por si
- * la estimación por colores no encaja con cómo trabaja el taller.
+ * naranja/rojo, ver `colorDia`) — batch 19, parte 3. La lista cronológica
+ * original se mantiene como una segunda vista ("Lista").
+ *
+ * **Batch 19, parte 4** (a petición del usuario tras usar la parte 3, que
+ * consideró la estimación de "8h/1cita" demasiado simple para un taller con
+ * varios empleados abierto muchas horas): el color de cada día y el detalle
+ * del día seleccionado ahora se calculan por FRANJAS HORARIAS de 1h dentro
+ * de un horario de apertura fijo (`HORA_APERTURA`–`HORA_CIERRE`, continuo,
+ * confirmado por el usuario), comparando en cada franja cuántas citas caen
+ * a la vez contra las "plazas de trabajo simultáneas" del taller
+ * (`configuracion_taller.plazas_simultaneas` — un número fijo editable por
+ * dueño/encargado/admin con el botón de engranaje de aquí abajo, no
+ * calculado a partir del nº de mecánicos). Como la app no guarda cuánto
+ * dura una cita, se usa una duración estimada por tipo de servicio
+ * (`DURACION_MINUTOS_POR_SERVICIO`, confirmado por el usuario que debía
+ * depender del tipo de servicio).
  */
-export default function AgendaPanel() {
+export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
   const [eventos, setEventos] = useState<EventoAgenda[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -132,6 +195,59 @@ export default function AgendaPanel() {
   });
   const [diaSeleccionado, setDiaSeleccionado] = useState<string>(() => claveFechaLocal(new Date()));
 
+  // Plazas de trabajo simultáneas del taller (batch 19, parte 4) — un
+  // número fijo editable por dueño/encargado/admin, guardado en la fila
+  // única de `configuracion_taller`. Por defecto 2 mientras carga o si la
+  // migración/tabla todavía no existe en el proyecto Supabase del usuario.
+  const [plazas, setPlazas] = useState(2);
+  const [editandoPlazas, setEditandoPlazas] = useState(false);
+  const [plazasInput, setPlazasInput] = useState('2');
+  const [guardandoPlazas, setGuardandoPlazas] = useState(false);
+  const [errorPlazas, setErrorPlazas] = useState<string | null>(null);
+
+  const cargarConfiguracion = useCallback(async () => {
+    const { data } = await supabase
+      .from('configuracion_taller')
+      .select('plazas_simultaneas')
+      .eq('id', 1)
+      .maybeSingle();
+    if (data) {
+      setPlazas(data.plazas_simultaneas);
+      setPlazasInput(String(data.plazas_simultaneas));
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarConfiguracion();
+  }, [cargarConfiguracion]);
+
+  const guardarPlazas = async (e: FormEvent) => {
+    e.preventDefault();
+    const valor = Number(plazasInput);
+    if (!Number.isInteger(valor) || valor < 1) {
+      setErrorPlazas('Introduce un número entero de 1 o más.');
+      return;
+    }
+    setErrorPlazas(null);
+    setGuardandoPlazas(true);
+    const { error: updateError } = await supabase
+      .from('configuracion_taller')
+      .update({ plazas_simultaneas: valor })
+      .eq('id', 1);
+    setGuardandoPlazas(false);
+    if (updateError) {
+      setErrorPlazas(
+        updateError.message.includes('configuracion_taller')
+          ? 'No se pudo guardar: parece que falta ejecutar la migración batch19_parte4_migration.sql en Supabase.'
+          : updateError.message,
+      );
+      return;
+    }
+    setPlazas(valor);
+    setEditandoPlazas(false);
+  };
+
   const cargar = useCallback(async () => {
     setCargando(true);
     setError(null);
@@ -139,13 +255,15 @@ export default function AgendaPanel() {
       supabase
         .from('ordenes_trabajo')
         .select(
-          'id, cita_recogida, vehiculos(matricula, marca, modelo, clientes(nombre, telefono))',
+          'id, cita_recogida, tipo_servicio, vehiculos(matricula, marca, modelo, clientes(nombre, telefono))',
         )
         .not('cita_recogida', 'is', null)
         .eq('estado', 'listo'),
       supabase
         .from('solicitudes')
-        .select('id, fecha_cita_checkin, matricula, marca, modelo, nombre_cliente, telefono_cliente')
+        .select(
+          'id, fecha_cita_checkin, tipo_servicio, matricula, marca, modelo, nombre_cliente, telefono_cliente',
+        )
         .not('fecha_cita_checkin', 'is', null)
         .in('estado', ['pendiente', 'aceptada']),
     ]);
@@ -165,6 +283,7 @@ export default function AgendaPanel() {
       const orden = o as unknown as {
         id: string;
         cita_recogida: string;
+        tipo_servicio: TipoServicio | null;
         vehiculos: {
           matricula: string;
           marca: string | null;
@@ -176,6 +295,7 @@ export default function AgendaPanel() {
         id: `recogida-${orden.id}`,
         tipo: 'recogida',
         fecha: orden.cita_recogida,
+        tipoServicio: orden.tipo_servicio,
         matricula: orden.vehiculos?.matricula ?? null,
         marcaModelo: [orden.vehiculos?.marca, orden.vehiculos?.modelo].filter(Boolean).join(' '),
         clienteNombre: orden.vehiculos?.clientes?.nombre ?? 'Cliente',
@@ -187,6 +307,7 @@ export default function AgendaPanel() {
       const sol = s as {
         id: string;
         fecha_cita_checkin: string;
+        tipo_servicio: TipoServicio | null;
         matricula: string | null;
         marca: string | null;
         modelo: string | null;
@@ -197,6 +318,7 @@ export default function AgendaPanel() {
         id: `checkin-${sol.id}`,
         tipo: 'checkin',
         fecha: sol.fecha_cita_checkin,
+        tipoServicio: sol.tipo_servicio,
         matricula: sol.matricula,
         marcaModelo: [sol.marca, sol.modelo].filter(Boolean).join(' '),
         clienteNombre: sol.nombre_cliente,
@@ -239,6 +361,24 @@ export default function AgendaPanel() {
     return mapa;
   }, [eventos]);
 
+  // Ocupación por franja horaria de 1h dentro de cada día (batch 19, parte
+  // 4): Map<"YYYY-MM-DD", Map<hora, nº de citas que la ocupan a la vez>> —
+  // cada cita cuenta en TODAS las horas que solapa según su duración
+  // estimada (ver `horasOcupadas`/`duracionMinutos`).
+  const ocupacionPorDia = useMemo(() => {
+    const mapa = new Map<string, Map<number, number>>();
+    for (const evento of eventos) {
+      const fecha = new Date(evento.fecha);
+      const clave = claveFechaLocal(fecha);
+      const porHora = mapa.get(clave) ?? new Map<number, number>();
+      for (const h of horasOcupadas(fecha, duracionMinutos(evento))) {
+        porHora.set(h, (porHora.get(h) ?? 0) + 1);
+      }
+      mapa.set(clave, porHora);
+    }
+    return mapa;
+  }, [eventos]);
+
   // Vista de lista: agrupada por día "legible", con el filtro de "Solo
   // próximas" (que no se aplica a la vista de mes: un mes se navega hacia
   // delante/atrás libremente, así que ese filtro no pintaría nada).
@@ -255,6 +395,11 @@ export default function AgendaPanel() {
 
   const celdas = useMemo(() => celdasDelMes(mesActual), [mesActual]);
   const eventosDiaSeleccionado = eventosPorDia.get(diaSeleccionado) ?? [];
+  const ocupacionDiaSeleccionado = ocupacionPorDia.get(diaSeleccionado);
+  const horasDelDia = useMemo(
+    () => Array.from({ length: HORA_CIERRE - HORA_APERTURA }, (_, i) => HORA_APERTURA + i),
+    [],
+  );
   const hoyClave = claveFechaLocal(new Date());
 
   const cambiarMes = (delta: number) => {
@@ -280,6 +425,17 @@ export default function AgendaPanel() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {esEncargado && (
+            <button
+              type="button"
+              onClick={() => setEditandoPlazas((v) => !v)}
+              title="Configurar plazas de trabajo simultáneas"
+              aria-label="Configurar plazas de trabajo simultáneas"
+              className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-600 shadow-sm hover:bg-gray-50"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          )}
           <div className="flex rounded-xl border border-gray-300 bg-white p-0.5 shadow-sm">
             <button
               type="button"
@@ -310,6 +466,45 @@ export default function AgendaPanel() {
           </button>
         </div>
       </header>
+
+      {esEncargado && editandoPlazas && (
+        <form
+          onSubmit={guardarPlazas}
+          className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4"
+        >
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              Plazas de trabajo simultáneas (elevadores/puestos)
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={plazasInput}
+              onChange={(e) => setPlazasInput(e.target.value)}
+              className="w-28 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={guardandoPlazas}
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+          >
+            {guardandoPlazas ? 'Guardando...' : 'Guardar'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditandoPlazas(false)}
+            className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            <X className="h-3.5 w-3.5" /> Cancelar
+          </button>
+          {errorPlazas && <p className="w-full text-xs text-red-600">{errorPlazas}</p>}
+          <p className="w-full text-xs text-gray-500">
+            Cuántas citas caben a la vez en la misma franja horaria de 1h — se usa para calcular el color de
+            cada día y las franjas ocupadas/libres de abajo.
+          </p>
+        </form>
+      )}
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
@@ -363,7 +558,7 @@ export default function AgendaPanel() {
                 const clave = claveFechaLocal(fecha);
                 const enMes = fecha.getMonth() === mesActual.getMonth();
                 const numEventos = eventosPorDia.get(clave)?.length ?? 0;
-                const color = colorDia(numEventos);
+                const color = colorDia(ocupacionPorDia.get(clave), plazas);
                 const seleccionado = clave === diaSeleccionado;
                 return (
                   <button
@@ -388,13 +583,14 @@ export default function AgendaPanel() {
                 <span className="h-2 w-2 rounded-full bg-emerald-400" /> Libre
               </span>
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-amber-400" /> Quedan horas libres
+                <span className="h-2 w-2 rounded-full bg-amber-400" /> Quedan franjas libres
               </span>
               <span className="flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-red-400" /> Día completo
               </span>
               <span className="text-gray-400">
-                (estimación asumiendo {HORAS_LABORABLES_DIA} horas de trabajo al día y 1 hora por cita)
+                (franjas de 1h entre las {HORA_APERTURA}:00 y las {HORA_CIERRE}:00, con {plazas} plaza
+                {plazas === 1 ? '' : 's'} de trabajo simultánea{plazas === 1 ? '' : 's'})
               </span>
             </div>
           </div>
@@ -407,6 +603,32 @@ export default function AgendaPanel() {
                 month: 'long',
               })}
             </h3>
+
+            <div className="mb-4 space-y-1.5">
+              {horasDelDia.map((h) => {
+                const ocupadas = ocupacionDiaSeleccionado?.get(h) ?? 0;
+                const estado: ColorDia = ocupadas === 0 ? 'libre' : ocupadas >= plazas ? 'lleno' : 'parcial';
+                const clientesEnFranja = eventosDiaSeleccionado
+                  .filter((e) => horasOcupadas(new Date(e.fecha), duracionMinutos(e)).includes(h))
+                  .map((e) => e.clienteNombre);
+                return (
+                  <div
+                    key={h}
+                    className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-xs ${ESTILO_FRANJA[estado]}`}
+                  >
+                    <span className="shrink-0 font-medium">
+                      {String(h).padStart(2, '0')}:00–{String(h + 1).padStart(2, '0')}:00
+                    </span>
+                    <span className="truncate text-right">
+                      {ocupadas}/{plazas}
+                      {clientesEnFranja.length > 0 ? ` · ${clientesEnFranja.join(', ')}` : ' · Libre'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <h3 className="mb-2 text-sm font-semibold text-gray-700">Citas del día</h3>
             {eventosDiaSeleccionado.length === 0 ? (
               <p className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">
                 Sin citas ese día.

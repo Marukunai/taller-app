@@ -498,8 +498,10 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                               ) : (
                                 // Prestar un coche de sustitución, a diferencia de
                                 // devolverlo, se restringe a dueño/encargado/admin
-                                // (petición explícita del usuario) — solo a nivel de
-                                // interfaz, ver nota en batch19_parte3_migration.sql.
+                                // (petición explícita del usuario) — desde el batch
+                                // 19, parte 4 también reforzado por un trigger en
+                                // Supabase (restringir_prestamo_repuesto), no solo
+                                // ocultando este botón.
                                 esEncargado && (
                                   <button
                                     type="button"

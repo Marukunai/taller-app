@@ -329,6 +329,30 @@ create table if not exists coches_repuesto (
 );
 alter table coches_repuesto add column if not exists precio_hora numeric(10,2);
 
+-- 9b. CONFIGURACIÓN DEL TALLER (fila única, id fijo = 1) — batch 19, parte
+-- 4. De momento solo guarda cuántas citas caben a la vez en la misma
+-- franja horaria de la Agenda ("plazas de trabajo simultáneas": nº de
+-- elevadores/puestos, independiente de cuántos mecánicos haya), editable
+-- por dueño/encargado/admin desde la propia Agenda (ver AgendaPanel.tsx).
+-- Cualquier personal puede LEERLA (hace falta para pintar los colores/
+-- franjas de la Agenda a cualquier rol que la vea), pero solo
+-- dueño/encargado/admin puede EDITARLA.
+create table if not exists configuracion_taller (
+  id smallint primary key default 1 check (id = 1),
+  plazas_simultaneas integer not null default 2
+);
+insert into configuracion_taller (id, plazas_simultaneas)
+  values (1, 2)
+  on conflict (id) do nothing;
+
+alter table configuracion_taller enable row level security;
+drop policy if exists "Personal lee configuración" on configuracion_taller;
+create policy "Personal lee configuración" on configuracion_taller
+  for select using (es_personal());
+drop policy if exists "Encargado edita configuración" on configuracion_taller;
+create policy "Encargado edita configuración" on configuracion_taller
+  for update using (es_encargado()) with check (es_encargado());
+
 -- Columnas añadidas a `ordenes_trabajo` en batches posteriores al DDL
 -- original de la tabla (arriba, sección 3) — con `alter table ... add
 -- column if not exists` porque referencian tablas (`solicitudes`,
@@ -339,6 +363,30 @@ alter table ordenes_trabajo
   add column if not exists coche_repuesto_id uuid references coches_repuesto(id);
 alter table ordenes_trabajo add column if not exists fecha_prestamo_repuesto timestamp with time zone;
 alter table ordenes_trabajo add column if not exists fecha_devolucion_repuesto timestamp with time zone;
+
+-- Batch 19, parte 3: fecha prevista de devolución del coche de sustitución
+-- (préstamo mejorado) y medida de neumático por datalist, además de la
+-- foto que ya existía. Estas columnas ya se distribuyeron como migración
+-- incremental aparte (`batch19_parte3_migration.sql`) pero no se habían
+-- añadido aquí a `schema.sql` (instalación nueva) — corregido de paso al
+-- tocar esta sección en el batch 19, parte 4.
+alter table ordenes_trabajo add column if not exists fecha_devolucion_repuesto_prevista timestamp with time zone;
+alter table ordenes_trabajo add column if not exists neumatico_ancho text;
+alter table ordenes_trabajo add column if not exists neumatico_perfil text;
+alter table ordenes_trabajo add column if not exists neumatico_llanta text;
+alter table ordenes_trabajo add column if not exists neumatico_indice_carga text;
+alter table ordenes_trabajo add column if not exists neumatico_indice_velocidad text;
+alter table ordenes_trabajo add column if not exists neumatico_estacion text;
+
+-- Batch 19, parte 3: combustible/año/motor del vehículo (datalists) y
+-- aceptación del aviso anual de revisión (checkbox junto a la firma de
+-- salida en la Entrega) — mismo motivo que arriba, añadidas aquí también
+-- en el batch 19, parte 4 para que una instalación nueva quede igual que
+-- una ya migrada.
+alter table vehiculos add column if not exists combustible text;
+alter table vehiculos add column if not exists anio integer;
+alter table vehiculos add column if not exists motor text;
+alter table vehiculos add column if not exists aviso_anual_aceptado boolean not null default false;
 
 -- 10. PRECIOS DE INVENTARIO — tabla APARTE de inventario_items a propósito:
 -- así un mecánico, que SÍ puede leer inventario_items para elegir piezas
@@ -411,6 +459,36 @@ create policy "Personal Vehículos" on vehiculos
 alter table ordenes_trabajo enable row level security;
 create policy "Personal Ordenes" on ordenes_trabajo
   for all using (es_personal()) with check (es_personal());
+
+-- Restringe la ASIGNACIÓN de un coche de sustitución (préstamo) a
+-- dueño/encargado/admin a nivel de BASE DE DATOS, no solo de interfaz —
+-- batch 19, parte 4, a petición del usuario tras el feedback de la parte 3
+-- (antes la restricción solo ocultaba el botón en ManagementPanel.tsx/
+-- FlotaRepuestoPanel.tsx, pero un mecánico podía saltársela llamando
+-- directamente a la API). Se dispara solo cuando `coche_repuesto_id`
+-- CAMBIA a un valor no nulo (es decir, se presta un coche nuevo o se
+-- reasigna); DEVOLVER uno (que solo toca `fecha_devolucion_repuesto`, sin
+-- tocar `coche_repuesto_id`) sigue abierto a cualquier personal, como ya
+-- se pedía.
+create or replace function restringir_prestamo_repuesto()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if new.coche_repuesto_id is distinct from old.coche_repuesto_id
+     and new.coche_repuesto_id is not null
+     and not es_encargado() then
+    raise exception 'Solo un dueño, encargado o administrador puede prestar un coche de sustitución.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_restringir_prestamo_repuesto on ordenes_trabajo;
+create trigger trg_restringir_prestamo_repuesto
+  before update on ordenes_trabajo
+  for each row execute function restringir_prestamo_repuesto();
 
 alter table inspecciones_entrada enable row level security;
 create policy "Personal Inspecciones" on inspecciones_entrada

@@ -64,8 +64,24 @@ export default function SolicitudCitaPanel() {
     e.preventDefault();
     setError(null);
     setExito(false);
-    if (!form.nombre.trim() || !form.telefono.trim()) {
-      setError('El nombre y el teléfono del cliente son obligatorios.');
+    // Validación ampliada en el batch 19, parte 4 (feedback del usuario):
+    // esta pantalla es sobre todo para llamadas telefónicas o clientes sin
+    // cuenta del Portal, así que en vez de exigir el teléfono en concreto
+    // basta con AL MENOS una forma de contacto (teléfono o email) — por si
+    // hiciera falta volver a localizar al cliente más adelante. La fecha de
+    // la cita pasa a ser obligatoria aquí (antes era opcional): sin fecha
+    // no hay realmente una "cita". Matrícula sigue siendo opcional a
+    // propósito (llamadas urgentes de gente que no se acuerda de ella).
+    if (!form.nombre.trim()) {
+      setError('El nombre del cliente es obligatorio.');
+      return;
+    }
+    if (!form.telefono.trim() && !form.email.trim()) {
+      setError('Indica al menos una forma de contacto: teléfono o email.');
+      return;
+    }
+    if (!form.fechaCita) {
+      setError('La fecha de la cita es obligatoria.');
       return;
     }
     setGuardando(true);
@@ -139,13 +155,12 @@ export default function SolicitudCitaPanel() {
                 required
               />
               <Campo
-                label="Teléfono"
+                label="Teléfono (al menos uno de los dos)"
                 value={form.telefono}
                 onChange={(v) => setForm((p) => ({ ...p, telefono: v }))}
-                required
               />
               <Campo
-                label="Email (opcional)"
+                label="Email (al menos uno de los dos)"
                 value={form.email}
                 onChange={(v) => setForm((p) => ({ ...p, email: v }))}
                 type="email"
@@ -185,12 +200,13 @@ export default function SolicitudCitaPanel() {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Fecha propuesta para traerlo (opcional)
+                  Fecha propuesta para traerlo<span className="text-red-500"> *</span>
                 </label>
                 <input
                   type="datetime-local"
                   value={form.fechaCita}
                   onChange={(e) => setForm((p) => ({ ...p, fechaCita: e.target.value }))}
+                  required
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
               </div>

@@ -26,8 +26,8 @@ cuentas de mecánico.
    (`clientes`, `vehiculos`, `ordenes_trabajo`, `inspecciones_entrada`,
    `almacenes`, `inventario_items`, `piezas_usadas`, `perfiles`,
    `solicitudes`, `coches_repuesto`, `inventario_precios`, `presupuestos`,
-   `presupuesto_piezas`), las políticas de RLS, la publicación de Realtime
-   y unos datos de prueba.
+   `presupuesto_piezas`, `configuracion_taller`), las políticas de RLS, la
+   publicación de Realtime y unos datos de prueba.
 2. Ve a **Storage** y crea estos 3 buckets, marcados como **Public**:
    - `fotos-vehiculos`
    - `firmas`
@@ -142,6 +142,16 @@ cuentas de mecánico.
 > que no rompe nada de lo que ya funcionaba. No hace falta desplegar ninguna
 > Edge Function nueva para esta migración.
 >
+> Si tu proyecto ya tiene aplicado todo lo anterior y solo quieres añadir
+> las franjas horarias configurables de la Agenda (sección 26) y que
+> prestar un coche de sustitución también esté restringido a
+> dueño/encargado/admin a nivel de base de datos, no solo de interfaz
+> (sección 24), ejecuta
+> [`supabase/batch19_parte4_migration.sql`](./supabase/batch19_parte4_migration.sql).
+> También idempotente — crea una tabla nueva de una sola fila
+> (`configuracion_taller`) y un trigger nuevo, sin tocar ninguna columna
+> existente. No hace falta desplegar ninguna Edge Function nueva.
+>
 > Si prefieres borrar todos los datos de prueba y empezar de cero en vez
 > de aplicar migraciones una a una, ejecuta primero
 > [`supabase/reset_database.sql`](./supabase/reset_database.sql) y después
@@ -229,6 +239,7 @@ supabase/
   batch18_migration.sql            # migración incremental: precio/hora sustitución, doc. obligatoria check-in, cancelar devuelve stock
   roles_v2_migration.sql           # migración incremental: jerarquía admin/dueño/encargado/mecánico/recepcionista
   batch19_parte3_migration.sql     # migración incremental: agenda mensual, préstamo mejorado, aviso anual, datalists
+  batch19_parte4_migration.sql     # migración incremental: franjas horarias configurables, restricción de préstamo también por RLS
   functions/
     enviar-aviso-cliente/         # Edge Function: email real de "vehículo listo"
     crear-cuenta-personal/         # Edge Function: alta de cuentas de personal (cualquier rol asignable)
@@ -247,11 +258,12 @@ supabase/
    modelo, teléfono y **email** son obligatorios (no se puede guardar la
    inspección sin ellos). El tipo de servicio incluye ahora también
    **Pre ITV**, además de Mantenimiento/Neumáticos/Avería. Marca y modelo
-   llevan un `<datalist>` de sugerencia (fabricantes reales y, en función
-   del fabricante ya escrito, sus modelos habituales — ver
-   `src/lib/vehicleData.ts`), pero **siguen admitiendo texto libre** que no
-   esté en la lista: no es una restricción, solo rellena más rápido con el
-   teclado del móvil. Además hay tres campos **opcionales**, también con
+   llevan un `<datalist>` de sugerencia (más de 60 fabricantes — ampliado en
+   el batch 19, parte 4 — y, en función del fabricante ya escrito, sus
+   modelos habituales; ver `src/lib/vehicleData.ts`), pero **siguen
+   admitiendo texto libre** que no esté en la lista: no es una restricción,
+   solo rellena más rápido con el teclado del móvil, y la lista sigue sin
+   pretender ser exhaustiva. Además hay tres campos **opcionales**, también con
    datalist de sugerencia: combustible, año del modelo y prestaciones del
    motor (batch 19, parte 3).
 1b. Es obligatorio adjuntar (foto) **al menos uno** de estos dos
@@ -822,13 +834,16 @@ cliente lo trae de vuelta — devolver un préstamo, a diferencia de
 prestarlo, no está restringido: cualquier personal puede recibirlo de
 vuelta.
 
-**Restricción de quién puede prestar (batch 19, parte 3):** a petición del
-usuario, solo dueño/encargado/admin pueden iniciar un préstamo nuevo (ni
-mecánico ni recepcionista ven el botón) — esto es una restricción **solo de
-interfaz**, igual que ya se hacía con el botón de Presupuesto: no hay
-ninguna política RLS nueva que lo impida a nivel de base de datos (ver nota
-en `supabase/batch19_parte3_migration.sql` si en algún momento hiciera
-falta añadirla).
+**Restricción de quién puede prestar:** solo dueño/encargado/admin pueden
+iniciar un préstamo nuevo — ni mecánico ni recepcionista ven el botón
+"Coche de sustitución" ni "Enlazar a una orden" (batch 19, parte 3), **y
+desde el batch 19, parte 4 esto también está reforzado a nivel de base de
+datos**: un trigger (`restringir_prestamo_repuesto`, en
+`batch19_parte4_migration.sql`) rechaza cualquier intento de asignar
+`coche_repuesto_id` a un valor nuevo si quien hace la llamada no es
+dueño/encargado/admin, aunque se salte la interfaz y llame directamente a
+la API. Devolver un préstamo ya hecho sigue abierto a cualquier personal,
+sin restricción — solo prestar uno nuevo está limitado.
 
 ## 25. Presupuesto / factura interna
 
@@ -885,20 +900,39 @@ Pestaña **"Agenda"**, visible para cualquier personal, con las citas de:
 Dos vistas, con un botón para cambiar entre ellas (**Mes** es la vista por
 defecto):
 
-- **Mes** (batch 19, parte 3): un calendario mensual con navegación
-  mes a mes, donde cada día se pinta de un color según cuántas citas tiene
-  ese día — **verde** = sin ninguna cita, **naranja** = alguna cita pero por
-  debajo de las horas laborables asumidas, **rojo** = tantas o más citas
-  que horas laborables asumidas ("día completo"). **Importante — esto es
-  una ESTIMACIÓN, no una gestión real de franjas/aforo:** la app no tiene
-  ninguna configuración de horario del taller, así que el color se calcula
-  asumiendo 8 horas laborables al día y 1 hora por cita (una única
-  constante en `AgendaPanel.tsx`, fácil de ajustar si el horario real del
-  taller es muy distinto). Al tocar un día se ve debajo el detalle de sus
-  citas.
+- **Mes**: un calendario mensual con navegación mes a mes, donde cada día
+  se pinta de un color — **verde** = ninguna franja horaria tiene citas,
+  **rojo** = TODAS las franjas horarias del horario de apertura están a
+  plazas completas ("día completo"), **naranja** = cualquier situación
+  intermedia. Al tocar un día se ve debajo el detalle por franjas horarias
+  y la lista de sus citas.
 - **Lista**: la vista cronológica original, agrupada por día, con el filtro
-  "Solo próximas" — se mantiene por si la estimación por colores de la
-  vista Mes no encaja con cómo trabaja el taller.
+  "Solo próximas" — se mantiene por si el cálculo por franjas de la vista
+  Mes no encaja con cómo trabaja el taller.
+
+**Franjas horarias y plazas simultáneas (batch 19, parte 4):** el color de
+cada día y el detalle del día seleccionado (una franja por cada hora, con
+cuántas citas caen en ella y de quién) se calculan comparando, en cada
+franja de 1 hora, cuántas citas caen a la vez contra las **"plazas de
+trabajo simultáneas"** del taller — por ejemplo, con 2 plazas, una franja
+con 2 citas ya está "completa" y una tercera cita a esa hora la pintaría
+igualmente como completa, aunque solo dure media hora. Estas plazas
+representan elevadores/puestos de trabajo, **no el número de mecánicos**:
+es un número fijo que **dueño, encargado y admin** pueden cambiar desde el
+propio icono de engranaje (⚙) de la cabecera de la Agenda — por defecto 2.
+Se guarda en la tabla `configuracion_taller` (fila única, ver
+`batch19_parte4_migration.sql`), legible por cualquier personal (para que
+la Agenda pinte los colores) pero editable solo por dueño/encargado/admin.
+
+El horario de apertura asumido es **continuo, de 8:00 a 20:00** (dos
+constantes en `AgendaPanel.tsx`, fáciles de ajustar si el horario real del
+taller cambia — la app no tiene una pantalla de configuración de horario).
+Como la app tampoco guarda cuánto dura una cita (solo la hora de inicio),
+cada una se asume que ocupa una franja de 1h, 45min o 30min según su
+**tipo de servicio** (`DURACION_MINUTOS_POR_SERVICIO` en `AgendaPanel.tsx`:
+mantenimiento 60min, neumáticos 45min, Pre ITV 30min, avería 90min) — son
+estimaciones propias razonables, no datos configurados por el taller;
+ajústalas ahí si no encajan con la duración real de cada servicio.
 
 No sustituye ningún calendario externo — sigue siendo una vista de solo
 lectura pensada para ver de un vistazo qué se espera cada día.
@@ -944,9 +978,15 @@ El check-in se divide en dos pasos, para poder anotar una cita antes de que
 el vehículo esté físicamente en el taller:
 
 1. **Solicitud de cita** (pestaña propia, con icono de calendario): datos
-   del dueño y del vehículo (nombre, teléfono, email opcional, matrícula,
-   marca, modelo, tipo de servicio y, si se conoce, fecha propuesta para
-   traerlo) — SIN daños, kilometraje ni firma. Se rellena tanto desde el
+   del dueño y del vehículo — SIN daños, kilometraje ni firma. **Obligatorio
+   (batch 19, parte 4)**: nombre, **al menos una forma de contacto** (teléfono
+   o email — no hace falta rellenar los dos) y la fecha propuesta para
+   traerlo. Matrícula, marca y modelo siguen siendo **opcionales** a
+   propósito en esta pantalla: pensada sobre todo para una llamada
+   telefónica urgente donde puede que el cliente no recuerde la matrícula o
+   no sepa aún el modelo exacto — con nombre, un contacto y la fecha ya es
+   una cita utilizable, y el resto se completa en el check-in real (paso 2)
+   cuando el coche esté físicamente en el taller. Se rellena tanto desde el
    Portal de cliente (sección 14) como, con el formulario "+ Nueva
    solicitud" de esta misma pestaña, por el propio personal (una llamada
    telefónica, o un cliente sin cuenta del Portal). Ambos orígenes caen en

@@ -478,7 +478,7 @@ function App() {
       {vista === 'inventario' && !esRecepcionista && <InventoryPanel esEncargado={esEncargado} />}
       {vista === 'gestion_personal' && esGestionCuentas && <PersonnelPanel miId={session.user.id} />}
       {vista === 'flota_repuesto' && esEncargado && <FlotaRepuestoPanel />}
-      {vista === 'agenda' && <AgendaPanel />}
+      {vista === 'agenda' && <AgendaPanel esEncargado={esEncargado} />}
       {vista === 'estadisticas' && esEncargado && <EstadisticasPanel />}
     </div>
   );
