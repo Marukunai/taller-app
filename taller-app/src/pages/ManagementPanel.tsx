@@ -679,23 +679,26 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                                       )}
                                     </span>
                                   )}
-                                  {/* Devolver el préstamo queda al alcance de cualquier
-                                      personal (no solo esEncargado) — es una acción
-                                      "cerrar", no "prestar", y cualquiera puede
-                                      recibir de vuelta el coche de sustitución. */}
-                                  <button
-                                    type="button"
-                                    onClick={() => marcarRepuestoDevuelto(orden)}
-                                    disabled={devolviendoId === orden.id}
-                                    className="mt-1 flex w-full items-center justify-center gap-1 rounded-md bg-white px-2 py-1 font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-60"
-                                  >
-                                    {devolviendoId === orden.id ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <Undo2 className="h-3 w-3" />
-                                    )}
-                                    Devuelto
-                                  </button>
+                                  {/* Batch 21: devolver el préstamo se restringió a
+                                      dueño/encargado/admin (antes lo podía hacer
+                                      cualquier personal) — reforzado también por un
+                                      trigger en base de datos, ver
+                                      supabase/batch21_migration.sql. */}
+                                  {esEncargado && (
+                                    <button
+                                      type="button"
+                                      onClick={() => marcarRepuestoDevuelto(orden)}
+                                      disabled={devolviendoId === orden.id}
+                                      className="mt-1 flex w-full items-center justify-center gap-1 rounded-md bg-white px-2 py-1 font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+                                    >
+                                      {devolviendoId === orden.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Undo2 className="h-3 w-3" />
+                                      )}
+                                      Devuelto
+                                    </button>
+                                  )}
                                 </div>
                               ) : (
                                 // Prestar un coche de sustitución, a diferencia de

@@ -46,7 +46,7 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
           .order('created_at', { ascending: true }),
         supabase
           .from('inventario_items')
-          .select('id, nombre, tipo, tamano, cantidad, imagen_url')
+          .select('id, nombre, tipo, tamano, cantidad, unidad, imagen_url')
           .order('tipo', { ascending: true })
           .order('nombre', { ascending: true }),
       ]);
@@ -82,7 +82,7 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
         .order('created_at', { ascending: true }),
       supabase
         .from('inventario_items')
-        .select('id, nombre, tipo, tamano, cantidad, imagen_url')
+        .select('id, nombre, tipo, tamano, cantidad, unidad, imagen_url')
         .order('tipo', { ascending: true })
         .order('nombre', { ascending: true }),
     ]);
@@ -219,7 +219,9 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
                   <option value="">Selecciona un item...</option>
                   {inventarioFiltrado.map((i) => (
                     <option key={i.id} value={i.id} disabled={i.cantidad === 0}>
-                      {i.nombre} — {i.cantidad === 0 ? 'Agotado' : `${i.cantidad} disponibles`}
+                      {i.nombre}
+                      {i.tamano ? ` (${i.tamano})` : ''} —{' '}
+                      {i.cantidad === 0 ? 'Agotado' : `${i.cantidad}${sufijoUnidad(i.unidad)} disponibles`}
                     </option>
                   ))}
                 </select>
@@ -241,6 +243,20 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
                     onChange={(e) => setCantidad(e.target.value)}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   />
+                  {itemActual && itemActual.unidad !== 'ud' && (
+                    <div className="mt-1.5 flex gap-1.5">
+                      {[0.5, 1, 2].map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setCantidad(String(v))}
+                          className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-500 hover:bg-gray-50"
+                        >
+                          {v} {itemActual.unidad}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -254,7 +270,8 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
               {itemActual && cantidad && Number(cantidad) > itemActual.cantidad && (
                 <p className="flex items-center gap-1.5 text-xs text-amber-700">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Solo quedan {itemActual.cantidad} unidades en el inventario.
+                  Solo quedan {itemActual.cantidad}
+                  {itemActual.unidad === 'ud' ? ' unidades' : ` ${itemActual.unidad}`} en el inventario.
                 </p>
               )}
             </form>
@@ -264,3 +281,11 @@ export default function PiezasUsadasModal({ open, ordenId, matricula, onClose }:
     </div>
   );
 }
+
+/** Sufijo a mostrar junto a una cantidad — vacío para 'ud' (una pieza
+ *  contable sigue viéndose como un número pelado), " L" / " kg" para
+ *  consumibles a granel (batch 21). */
+function sufijoUnidad(unidad: string): string {
+  return unidad === 'ud' ? '' : ` ${unidad}`;
+}
+

@@ -96,6 +96,10 @@ create table if not exists inventario_items (
   -- numeric (no int): hay consumos fraccionarios, ej. 0.5 o 5.5 litros de
   -- aceite en una revisión — ver piezas_usadas.cantidad más abajo.
   cantidad numeric(10,2) not null default 0,
+  -- 'ud' (piezas contables, por defecto) o 'L'/'kg' para consumibles a
+  -- granel (aceites, líquidos, grasa) — batch 21, para poder llevar el
+  -- stock de estos en litros/kilos reales en vez de "número de envases".
+  unidad text not null default 'ud' check (unidad in ('ud', 'L', 'kg')),
   imagen_url text,         -- foto opcional para distinguir el item visualmente
   almacen_id uuid not null references almacenes(id) on delete cascade,
   unique (nombre, almacen_id)
@@ -436,7 +440,11 @@ create table if not exists presupuesto_piezas (
   presupuesto_id uuid not null references presupuestos(id) on delete cascade,
   pieza_usada_id uuid references piezas_usadas(id) on delete set null,
   nombre_item text not null,
-  cantidad int not null,
+  -- numeric (no int, desde el batch 21): copia la cantidad de
+  -- `piezas_usadas`, que admite decimales (ej. 0.5 L de aceite) — con
+  -- `int` aquí, recalcular el presupuesto de una orden con una pieza
+  -- decimal fallaba.
+  cantidad numeric(10,2) not null,
   precio_unitario numeric(10,2) not null default 0
 );
 
@@ -467,9 +475,9 @@ create policy "Personal Ordenes" on ordenes_trabajo
 -- FlotaRepuestoPanel.tsx, pero un mecánico podía saltársela llamando
 -- directamente a la API). Se dispara solo cuando `coche_repuesto_id`
 -- CAMBIA a un valor no nulo (es decir, se presta un coche nuevo o se
--- reasigna); DEVOLVER uno (que solo toca `fecha_devolucion_repuesto`, sin
--- tocar `coche_repuesto_id`) sigue abierto a cualquier personal, como ya
--- se pedía.
+-- reasigna). Desde el batch 21, DEVOLVER uno (que solo toca
+-- `fecha_devolucion_repuesto`) también se restringe a dueño/encargado/
+-- admin — antes estaba abierto a cualquier personal.
 create or replace function restringir_prestamo_repuesto()
 returns trigger
 language plpgsql
@@ -480,6 +488,12 @@ begin
      and new.coche_repuesto_id is not null
      and not es_encargado() then
     raise exception 'Solo un dueño, encargado o administrador puede prestar un coche de sustitución.';
+  end if;
+  if new.fecha_devolucion_repuesto is distinct from old.fecha_devolucion_repuesto
+     and new.fecha_devolucion_repuesto is not null
+     and old.fecha_devolucion_repuesto is null
+     and not es_encargado() then
+    raise exception 'Solo un dueño, encargado o administrador puede marcar devuelto un coche de sustitución.';
   end if;
   return new;
 end;
@@ -870,68 +884,72 @@ on conflict (matricula) do nothing;
 -- creado más arriba — si el taller tiene más de una nave, los items de las
 -- demás se añaden a mano desde la app tras crear el almacén correspondiente.
 -- =============================================================
-insert into inventario_items (nombre, tipo, tamano, cantidad, almacen_id)
-select v.nombre, v.tipo, v.tamano, v.cantidad, (select id from almacenes where nombre = 'Almacén 1')
+-- Desde el batch 21, los 8 items a granel (aceites, líquidos, grasa) se
+-- siembran ya en litros/kilos REALES (no "número de envases" como antes:
+-- ej. antes eran "20" garrafas de 5L, ahora son "100" litros) — `tamano`
+-- se conserva como referencia de en qué envase se compra normalmente.
+insert into inventario_items (nombre, tipo, tamano, cantidad, unidad, almacen_id)
+select v.nombre, v.tipo, v.tamano, v.cantidad, v.unidad, (select id from almacenes where nombre = 'Almacén 1')
 from (values
-  ('Aceite motor 5W30', 'Aceites y lubricantes', '5L', 20),
-  ('Aceite motor 5W40', 'Aceites y lubricantes', '5L', 20),
-  ('Aceite motor 10W40', 'Aceites y lubricantes', '5L', 15),
-  ('Aceite motor 15W40', 'Aceites y lubricantes', '5L', 10),
-  ('Líquido de frenos DOT4', 'Aceites y lubricantes', '500ml', 15),
-  ('Líquido refrigerante concentrado', 'Aceites y lubricantes', '5L', 10),
-  ('Grasa multiusos', 'Aceites y lubricantes', '400g', 8),
-  ('Filtro de aceite (genérico turismo)', 'Filtros', null, 30),
-  ('Filtro de aire (genérico turismo)', 'Filtros', null, 25),
-  ('Filtro de habitáculo / polen', 'Filtros', null, 25),
-  ('Filtro de combustible diésel', 'Filtros', null, 15),
-  ('Filtro de combustible gasolina', 'Filtros', null, 15),
-  ('Pastillas de freno delanteras', 'Frenos', null, 15),
-  ('Pastillas de freno traseras', 'Frenos', null, 15),
-  ('Discos de freno delanteros (par)', 'Frenos', null, 8),
-  ('Discos de freno traseros (par)', 'Frenos', null, 8),
-  ('Latiguillo de freno', 'Frenos', null, 10),
-  ('Zapatas de freno trasero (tambor)', 'Frenos', null, 6),
-  ('Neumático 175/65 R14', 'Neumáticos', '175/65 R14', 4),
-  ('Neumático 195/65 R15', 'Neumáticos', '195/65 R15', 4),
-  ('Neumático 205/55 R16', 'Neumáticos', '205/55 R16', 4),
-  ('Neumático 215/45 R17', 'Neumáticos', '215/45 R17', 4),
-  ('Válvula de neumático (juego)', 'Neumáticos', null, 20),
-  ('Sensor de presión de neumáticos (TPMS)', 'Neumáticos', null, 4),
-  ('Correa de distribución (kit con tensores)', 'Correas y transmisión', null, 6),
-  ('Correa de accesorios (poly-V)', 'Correas y transmisión', null, 10),
-  ('Kit de embrague completo', 'Correas y transmisión', null, 4),
-  ('Rodamiento de rueda delantero', 'Correas y transmisión', null, 8),
-  ('Rodamiento de rueda trasero', 'Correas y transmisión', null, 8),
-  ('Bujía de encendido', 'Encendido', null, 40),
-  ('Bujía de precalentamiento diésel', 'Encendido', null, 20),
-  ('Bobina de encendido', 'Encendido', null, 8),
-  ('Cable de bujía (juego)', 'Encendido', null, 6),
-  ('Batería 12V 45Ah', 'Eléctrico', '45Ah', 5),
-  ('Batería 12V 60Ah', 'Eléctrico', '60Ah', 5),
-  ('Batería 12V 70Ah', 'Eléctrico', '70Ah', 4),
-  ('Bombilla H1', 'Eléctrico', null, 15),
-  ('Bombilla H4', 'Eléctrico', null, 15),
-  ('Bombilla H7', 'Eléctrico', null, 20),
-  ('Bombilla LED W5W', 'Eléctrico', null, 20),
-  ('Fusibles surtidos (caja)', 'Eléctrico', null, 10),
-  ('Escobillas de motor de arranque', 'Eléctrico', null, 6),
-  ('Amortiguador delantero', 'Suspensión y dirección', null, 8),
-  ('Amortiguador trasero', 'Suspensión y dirección', null, 8),
-  ('Rótula de dirección', 'Suspensión y dirección', null, 10),
-  ('Terminal de dirección', 'Suspensión y dirección', null, 10),
-  ('Muelle de suspensión', 'Suspensión y dirección', null, 6),
-  ('Radiador de agua (genérico)', 'Refrigeración', null, 3),
-  ('Termostato', 'Refrigeración', null, 10),
-  ('Manguito de refrigerante', 'Refrigeración', null, 8),
-  ('Electroventilador', 'Refrigeración', null, 3),
-  ('Silencioso trasero (genérico)', 'Escape', null, 3),
-  ('Catalizador (genérico)', 'Escape', null, 2),
-  ('Junta de escape', 'Escape', null, 15),
-  ('Escobilla limpiaparabrisas 500mm', 'Limpieza y consumibles', '500mm', 10),
-  ('Escobilla limpiaparabrisas 600mm', 'Limpieza y consumibles', '600mm', 10),
-  ('Líquido limpiaparabrisas', 'Limpieza y consumibles', '5L', 15),
-  ('Guantes de nitrilo (caja 100)', 'Limpieza y consumibles', null, 10),
-  ('Trapos industriales (paquete)', 'Limpieza y consumibles', null, 10),
-  ('Abrazaderas surtidas (caja)', 'Limpieza y consumibles', null, 10)
-) as v(nombre, tipo, tamano, cantidad)
+  ('Aceite motor 5W30', 'Aceites y lubricantes', '5L', 100, 'L'),
+  ('Aceite motor 5W40', 'Aceites y lubricantes', '5L', 100, 'L'),
+  ('Aceite motor 10W40', 'Aceites y lubricantes', '5L', 75, 'L'),
+  ('Aceite motor 15W40', 'Aceites y lubricantes', '5L', 50, 'L'),
+  ('Líquido de frenos DOT4', 'Aceites y lubricantes', '500ml', 7.5, 'L'),
+  ('Líquido refrigerante concentrado', 'Aceites y lubricantes', '5L', 50, 'L'),
+  ('Grasa multiusos', 'Aceites y lubricantes', '400g', 3.2, 'kg'),
+  ('Filtro de aceite (genérico turismo)', 'Filtros', null, 30, 'ud'),
+  ('Filtro de aire (genérico turismo)', 'Filtros', null, 25, 'ud'),
+  ('Filtro de habitáculo / polen', 'Filtros', null, 25, 'ud'),
+  ('Filtro de combustible diésel', 'Filtros', null, 15, 'ud'),
+  ('Filtro de combustible gasolina', 'Filtros', null, 15, 'ud'),
+  ('Pastillas de freno delanteras', 'Frenos', null, 15, 'ud'),
+  ('Pastillas de freno traseras', 'Frenos', null, 15, 'ud'),
+  ('Discos de freno delanteros (par)', 'Frenos', null, 8, 'ud'),
+  ('Discos de freno traseros (par)', 'Frenos', null, 8, 'ud'),
+  ('Latiguillo de freno', 'Frenos', null, 10, 'ud'),
+  ('Zapatas de freno trasero (tambor)', 'Frenos', null, 6, 'ud'),
+  ('Neumático 175/65 R14', 'Neumáticos', '175/65 R14', 4, 'ud'),
+  ('Neumático 195/65 R15', 'Neumáticos', '195/65 R15', 4, 'ud'),
+  ('Neumático 205/55 R16', 'Neumáticos', '205/55 R16', 4, 'ud'),
+  ('Neumático 215/45 R17', 'Neumáticos', '215/45 R17', 4, 'ud'),
+  ('Válvula de neumático (juego)', 'Neumáticos', null, 20, 'ud'),
+  ('Sensor de presión de neumáticos (TPMS)', 'Neumáticos', null, 4, 'ud'),
+  ('Correa de distribución (kit con tensores)', 'Correas y transmisión', null, 6, 'ud'),
+  ('Correa de accesorios (poly-V)', 'Correas y transmisión', null, 10, 'ud'),
+  ('Kit de embrague completo', 'Correas y transmisión', null, 4, 'ud'),
+  ('Rodamiento de rueda delantero', 'Correas y transmisión', null, 8, 'ud'),
+  ('Rodamiento de rueda trasero', 'Correas y transmisión', null, 8, 'ud'),
+  ('Bujía de encendido', 'Encendido', null, 40, 'ud'),
+  ('Bujía de precalentamiento diésel', 'Encendido', null, 20, 'ud'),
+  ('Bobina de encendido', 'Encendido', null, 8, 'ud'),
+  ('Cable de bujía (juego)', 'Encendido', null, 6, 'ud'),
+  ('Batería 12V 45Ah', 'Eléctrico', '45Ah', 5, 'ud'),
+  ('Batería 12V 60Ah', 'Eléctrico', '60Ah', 5, 'ud'),
+  ('Batería 12V 70Ah', 'Eléctrico', '70Ah', 4, 'ud'),
+  ('Bombilla H1', 'Eléctrico', null, 15, 'ud'),
+  ('Bombilla H4', 'Eléctrico', null, 15, 'ud'),
+  ('Bombilla H7', 'Eléctrico', null, 20, 'ud'),
+  ('Bombilla LED W5W', 'Eléctrico', null, 20, 'ud'),
+  ('Fusibles surtidos (caja)', 'Eléctrico', null, 10, 'ud'),
+  ('Escobillas de motor de arranque', 'Eléctrico', null, 6, 'ud'),
+  ('Amortiguador delantero', 'Suspensión y dirección', null, 8, 'ud'),
+  ('Amortiguador trasero', 'Suspensión y dirección', null, 8, 'ud'),
+  ('Rótula de dirección', 'Suspensión y dirección', null, 10, 'ud'),
+  ('Terminal de dirección', 'Suspensión y dirección', null, 10, 'ud'),
+  ('Muelle de suspensión', 'Suspensión y dirección', null, 6, 'ud'),
+  ('Radiador de agua (genérico)', 'Refrigeración', null, 3, 'ud'),
+  ('Termostato', 'Refrigeración', null, 10, 'ud'),
+  ('Manguito de refrigerante', 'Refrigeración', null, 8, 'ud'),
+  ('Electroventilador', 'Refrigeración', null, 3, 'ud'),
+  ('Silencioso trasero (genérico)', 'Escape', null, 3, 'ud'),
+  ('Catalizador (genérico)', 'Escape', null, 2, 'ud'),
+  ('Junta de escape', 'Escape', null, 15, 'ud'),
+  ('Escobilla limpiaparabrisas 500mm', 'Limpieza y consumibles', '500mm', 10, 'ud'),
+  ('Escobilla limpiaparabrisas 600mm', 'Limpieza y consumibles', '600mm', 10, 'ud'),
+  ('Líquido limpiaparabrisas', 'Limpieza y consumibles', '5L', 75, 'L'),
+  ('Guantes de nitrilo (caja 100)', 'Limpieza y consumibles', null, 10, 'ud'),
+  ('Trapos industriales (paquete)', 'Limpieza y consumibles', null, 10, 'ud'),
+  ('Abrazaderas surtidas (caja)', 'Limpieza y consumibles', null, 10, 'ud')
+) as v(nombre, tipo, tamano, cantidad, unidad)
 on conflict (nombre, almacen_id) do nothing;

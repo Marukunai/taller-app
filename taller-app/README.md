@@ -1098,3 +1098,45 @@ política: "Personal Ordenes"/"Personal Inspecciones"). Las políticas nuevas
 entrada") siguen el mismo patrón ya usado en `presupuestos`: solo por
 `solicitud_id` + `solicitudes.cliente_auth_id`, nunca dan acceso a nada de
 otro cliente.
+
+## 33. Batch 21: restricción coche de sustitución + unidades reales en inventario
+
+Requiere ejecutar **`supabase/batch21_migration.sql`** en el SQL Editor de
+Supabase antes de usar estos cambios.
+
+- **Devolver un coche de sustitución solo lo puede hacer dueño/encargado
+  (no mecánico).** Antes, `restringir_prestamo_repuesto()` solo restringía
+  quién puede *prestarlo*; ahora también restringe quién puede marcarlo
+  *devuelto* (`fecha_devolucion_repuesto`), a nivel de base de datos (no
+  solo ocultando el botón en `ManagementPanel`) — un mecánico con acceso
+  directo a la API tampoco podría marcarlo devuelto.
+- **Arreglo de bug: presupuesto con piezas decimales.** `piezas_usadas.
+  cantidad` ya admitía decimales desde hace tiempo, pero
+  `presupuesto_piezas.cantidad` seguía siendo `int` — al "Recalcular
+  piezas" de un presupuesto con una pieza de cantidad decimal (ej. 0.5 L de
+  aceite), fallaba. Ahora es `numeric(10,2)`, igual que el resto.
+- **Unidad de medida por item de inventario (`ud` / `L` / `kg`).** Nueva
+  columna `inventario_items.unidad`, por defecto `'ud'` (piezas contables,
+  el caso de siempre). Para aceites, líquidos y grasa se puede elegir `L` o
+  `kg` al crear/editar el item — el Panel de inventario entonces:
+  - muestra la unidad como sufijo junto a la cantidad (`12.5 L`, `3 kg`),
+  - añade botones rápidos de **±0.5** además de los ±1 ya existentes,
+  - y en el selector de "piezas usadas" (mantenimiento) muestra el tamaño
+    de envase (`tamano`, ej. "5L") junto al nombre y la disponibilidad con
+    su unidad, más botones de relleno rápido (0.5 / 1 / 2) al elegir un
+    item que no es `ud`.
+
+  **Importante — corrección manual pendiente tras migrar:** la migración
+  solo *etiqueta* la unidad de los items de líquidos/grasa ya existentes en
+  tu inventario real (Aceite motor 5W30/5W40/10W40/15W40, Líquido de frenos
+  DOT4, Líquido refrigerante concentrado, Líquido limpiaparabrisas, Grasa
+  multiusos) — nunca toca su `cantidad`, porque hasta ahora esa cantidad
+  contaba "envases" (ej. garrafas de 5L), no litros/kg reales, y transformarla
+  automáticamente podría no coincidir con lo que de verdad queda en el
+  taller si ya se ha consumido parte. Tras ejecutar la migración, hay que
+  revisar y corregir a mano, una vez, la cantidad de esos items concretos
+  desde el propio Panel de inventario (pasar de "nº de garrafas" a litros/
+  kg reales). Los items nuevos que se creen a partir de ahora ya se dan de
+  alta directamente en litros/kg reales. En instalaciones nuevas (sin datos
+  previos), el catálogo semilla de `schema.sql` ya usa litros/kg reales
+  desde el principio.

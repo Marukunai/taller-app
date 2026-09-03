@@ -183,12 +183,22 @@ export interface Almacen {
  *  clientes ni a órdenes de trabajo concretas. Pertenece a un almacén
  *  concreto (`almacen_id`) — el mismo repuesto en dos almacenes distintos
  *  son dos filas independientes, con su propio stock. */
+/** Unidad en la que se mide `cantidad` — 'ud' (piezas contables, por
+ *  defecto) o 'L'/'kg' para consumibles a granel (aceites, líquidos,
+ *  grasa). Batch 21: antes solo existía 'ud' implícito. IMPORTANTE — al
+ *  añadir la columna, los items YA existentes que se etiquetan como 'L'/
+ *  'kg' (ver migración) mantienen la `cantidad` que ya tenían, que hasta
+ *  ahora contaba "envases" (ej. garrafas de 5L), no litros/kg reales — hay
+ *  que corregirla a mano una vez por item desde el propio Inventario. */
+export type UnidadInventario = 'ud' | 'L' | 'kg';
+
 export interface InventarioItem {
   id: string;
   nombre: string;
   tipo: string;
   tamano: string | null;
   cantidad: number;
+  unidad: UnidadInventario;
   imagen_url: string | null;
   almacen_id: string;
 }

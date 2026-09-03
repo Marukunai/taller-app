@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Euro, ImagePlus, Loader2, Minus, Package, Pencil, Plus, Search, Trash2, Warehouse, X } from 'lucide-react';
 import { supabase, BUCKETS } from '../lib/supabase';
-import type { Almacen, InventarioItem } from '../lib/types';
+import type { Almacen, InventarioItem, UnidadInventario } from '../lib/types';
 
 /** Colores de acento por categoría, solo para que el panel se lea de un
  *  vistazo (mismo tipo → mismo color de icono/etiqueta). Si aparece una
@@ -30,6 +30,7 @@ interface NuevoItemForm {
   tipo: string;
   tamano: string;
   cantidad: string;
+  unidad: UnidadInventario;
   imagenFile: File | null;
   imagenPreview: string | null;
 }
@@ -39,9 +40,24 @@ const FORM_VACIO: NuevoItemForm = {
   tipo: '',
   tamano: '',
   cantidad: '1',
+  unidad: 'ud',
   imagenFile: null,
   imagenPreview: null,
 };
+
+/** Etiquetas de las 3 unidades admitidas — batch 21. */
+const UNIDADES: { value: UnidadInventario; label: string }[] = [
+  { value: 'ud', label: 'Unidades (piezas)' },
+  { value: 'L', label: 'Litros' },
+  { value: 'kg', label: 'Kilos' },
+];
+
+/** Sufijo a mostrar junto a una cantidad — vacío para 'ud' (una pieza
+ *  contable sigue viéndose como un número pelado, igual que siempre), " L"
+ *  / " kg" para consumibles a granel. */
+function sufijoUnidad(unidad: UnidadInventario): string {
+  return unidad === 'ud' ? '' : ` ${unidad}`;
+}
 
 interface InventoryPanelProps {
   /** Un mecánico puede CONSULTAR el inventario (para saber si hay stock
@@ -170,7 +186,7 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
     setError(null);
     const { data, error: fetchError } = await supabase
       .from('inventario_items')
-      .select('id, nombre, tipo, tamano, cantidad, imagen_url, almacen_id')
+      .select('id, nombre, tipo, tamano, cantidad, unidad, imagen_url, almacen_id')
       .eq('almacen_id', almacenActivo)
       .order('tipo', { ascending: true })
       .order('nombre', { ascending: true });
@@ -295,6 +311,7 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
           tipo: form.tipo.trim(),
           tamano: form.tamano.trim() || null,
           cantidad: Number(form.cantidad) || 0,
+          unidad: form.unidad,
           imagen_url: imagenUrl,
           almacen_id: almacenActivo,
         })
@@ -324,6 +341,7 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
       tipo: item.tipo,
       tamano: item.tamano ?? '',
       cantidad: String(item.cantidad),
+      unidad: item.unidad,
       imagenFile: null,
       imagenPreview: null,
       imagenUrlActual: item.imagen_url,
@@ -374,6 +392,7 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
           tipo: formEdicion.tipo.trim(),
           tamano: formEdicion.tamano.trim() || null,
           cantidad: Number(formEdicion.cantidad) || 0,
+          unidad: formEdicion.unidad,
           imagen_url: imagenUrl,
         })
         .eq('id', item.id)
@@ -606,6 +625,20 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Se mide en</label>
+              <select
+                value={form.unidad}
+                onChange={(e) => setForm((p) => ({ ...p, unidad: e.target.value as UnidadInventario }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              >
+                {UNIDADES.map((u) => (
+                  <option key={u.value} value={u.value}>
+                    {u.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div>
@@ -749,6 +782,22 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                             />
                           </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-gray-700">Se mide en</label>
+                            <select
+                              value={formEdicion.unidad}
+                              onChange={(e) =>
+                                setFormEdicion((p) => ({ ...p, unidad: e.target.value as UnidadInventario }))
+                              }
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            >
+                              {UNIDADES.map((u) => (
+                                <option key={u.value} value={u.value}>
+                                  {u.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                         <div>
                           <label className="mb-2 block text-xs font-medium text-gray-700">Foto</label>
@@ -886,6 +935,7 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                           <div className="flex shrink-0 items-center gap-1.5 self-end sm:self-auto">
                             <span className="rounded-full bg-gray-100 px-3 py-1 text-base font-semibold text-gray-700">
                               {item.cantidad}
+                              {sufijoUnidad(item.unidad)}
                             </span>
                           </div>
                         ) : confirmandoBorradoId === item.id ? (
@@ -910,25 +960,48 @@ export default function InventoryPanel({ esEncargado }: InventoryPanelProps) {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                          <div className="flex shrink-0 items-center gap-1.5 self-end sm:self-auto">
                             <button
                               type="button"
                               onClick={() => ajustarCantidad(item, -1)}
                               disabled={actualizandoId === item.id || item.cantidad === 0}
                               className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-                              aria-label="Quitar una unidad"
+                              aria-label="Quitar 1"
                             >
                               <Minus className="h-4 w-4" />
                             </button>
-                            <span className="w-7 text-center text-base font-semibold text-gray-900">
+                            {item.unidad !== 'ud' && (
+                              <button
+                                type="button"
+                                onClick={() => ajustarCantidad(item, -0.5)}
+                                disabled={actualizandoId === item.id || item.cantidad === 0}
+                                className="rounded-full border border-gray-200 px-1.5 py-1 text-[10px] font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                                aria-label="Quitar 0.5"
+                              >
+                                -0.5
+                              </button>
+                            )}
+                            <span className="w-12 text-center text-base font-semibold text-gray-900">
                               {item.cantidad}
+                              {sufijoUnidad(item.unidad)}
                             </span>
+                            {item.unidad !== 'ud' && (
+                              <button
+                                type="button"
+                                onClick={() => ajustarCantidad(item, 0.5)}
+                                disabled={actualizandoId === item.id}
+                                className="rounded-full border border-gray-200 px-1.5 py-1 text-[10px] font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                                aria-label="Añadir 0.5"
+                              >
+                                +0.5
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => ajustarCantidad(item, 1)}
                               disabled={actualizandoId === item.id}
                               className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-                              aria-label="Añadir una unidad"
+                              aria-label="Añadir 1"
                             >
                               <Plus className="h-4 w-4" />
                             </button>
