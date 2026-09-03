@@ -4,6 +4,7 @@ import {
   Calendar,
   CalendarClock,
   CalendarDays,
+  CalendarRange,
   Car,
   ChevronLeft,
   ChevronRight,
@@ -118,6 +119,44 @@ function horasOcupadas(fecha: Date, duracionMin: number): number[] {
   return horas;
 }
 
+/** Altura en px de una hora en la vista de Semana/Día (batch 23) — a más
+ *  px/hora, más "aire" para leer el texto de cada cita dentro de su bloque. */
+const ALTURA_HORA_PX = 64;
+
+interface BloqueEvento {
+  evento: EventoAgenda;
+  col: number;
+}
+
+/** Reparte las citas de UN día en columnas horizontales para que las que se
+ *  solapan en el tiempo se vean una al lado de otra en vez de tapándose
+ *  (batch 23, vista Semana/Día). Algoritmo simple tipo "greedy": recorre las
+ *  citas ordenadas por hora de inicio y reutiliza la primera columna que ya
+ *  quedó libre (su cita anterior terminó antes de que empiece la nueva); si
+ *  ninguna está libre, abre una columna nueva. El nº total de columnas se
+ *  usa para dar el mismo ancho a todos los bloques de ese día.
+ */
+function distribuirColumnas(eventosDia: EventoAgenda[]): { bloques: BloqueEvento[]; totalCols: number } {
+  const ordenados = eventosDia
+    .slice()
+    .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+  const finPorColumna: number[] = [];
+  const bloques: BloqueEvento[] = [];
+  for (const evento of ordenados) {
+    const inicio = new Date(evento.fecha).getTime();
+    const fin = inicio + duracionMinutos(evento) * 60000;
+    let col = finPorColumna.findIndex((finCol) => finCol <= inicio);
+    if (col === -1) {
+      col = finPorColumna.length;
+      finPorColumna.push(fin);
+    } else {
+      finPorColumna[col] = fin;
+    }
+    bloques.push({ evento, col });
+  }
+  return { bloques, totalCols: Math.max(1, finPorColumna.length) };
+}
+
 type ColorDia = 'libre' | 'parcial' | 'lleno';
 
 /** Verde = ninguna franja horaria del horario de apertura tiene ninguna
@@ -188,12 +227,21 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [soloProximas, setSoloProximas] = useState(true);
-  const [vista, setVista] = useState<'mes' | 'lista'>('mes');
+  const [vista, setVista] = useState<'mes' | 'semana' | 'lista'>('mes');
   const [mesActual, setMesActual] = useState(() => {
     const hoy = new Date();
     return new Date(hoy.getFullYear(), hoy.getMonth(), 1);
   });
   const [diaSeleccionado, setDiaSeleccionado] = useState<string>(() => claveFechaLocal(new Date()));
+
+  // Vista "Semana"/"Día" (batch 23) — calendario en línea de tiempo, hecho a
+  // mano igual que el resto de la Agenda (sin librerías de calendario).
+  // `fechaTimeline` es el día ancla: en modo "semana" se usa para calcular
+  // el lunes de esa semana (`inicioSemana`); en modo "día" es el día exacto
+  // que se muestra. Cambiar de una a otra conserva el día ancla, así que
+  // pulsar la cabecera de un día en la vista semanal salta a su vista diaria.
+  const [granularidadTimeline, setGranularidadTimeline] = useState<'semana' | 'dia'>('semana');
+  const [fechaTimeline, setFechaTimeline] = useState<Date>(() => new Date());
 
   // Plazas de trabajo simultáneas del taller (batch 19, parte 4) — un
   // número fijo editable por dueño/encargado/admin, guardado en la fila
@@ -394,6 +442,32 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
   }, [eventosFiltrados]);
 
   const celdas = useMemo(() => celdasDelMes(mesActual), [mesActual]);
+
+  // Días a pintar en la vista Semana/Día: o los 7 días de la semana que
+  // contiene `fechaTimeline` (lunes a domingo), o ese único día.
+  const diasTimeline = useMemo(() => {
+    if (granularidadTimeline === 'dia') return [fechaTimeline];
+    const inicio = inicioSemana(fechaTimeline);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(inicio);
+      d.setDate(d.getDate() + i);
+      return d;
+    });
+  }, [granularidadTimeline, fechaTimeline]);
+
+  const etiquetaTimeline = useMemo(() => {
+    if (granularidadTimeline === 'dia') return claveDia(fechaTimeline);
+    const inicio = diasTimeline[0];
+    const fin = diasTimeline[diasTimeline.length - 1];
+    const mismoMes = inicio.getMonth() === fin.getMonth();
+    const inicioStr = inicio.toLocaleDateString('es-ES', {
+      day: 'numeric',
+      month: mismoMes ? undefined : 'short',
+    });
+    const finStr = fin.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `${inicioStr} – ${finStr}`;
+  }, [granularidadTimeline, fechaTimeline, diasTimeline]);
+
   const eventosDiaSeleccionado = eventosPorDia.get(diaSeleccionado) ?? [];
   const ocupacionDiaSeleccionado = ocupacionPorDia.get(diaSeleccionado);
   const horasDelDia = useMemo(
@@ -411,6 +485,16 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
     setMesActual(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
     setDiaSeleccionado(claveFechaLocal(hoy));
   };
+
+  const cambiarTimeline = (delta: number) => {
+    setFechaTimeline((prev) => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() + delta * (granularidadTimeline === 'dia' ? 1 : 7));
+      return d;
+    });
+  };
+
+  const irAHoyTimeline = () => setFechaTimeline(new Date());
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
@@ -445,6 +529,15 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
               }`}
             >
               <CalendarDays className="h-3.5 w-3.5" /> Mes
+            </button>
+            <button
+              type="button"
+              onClick={() => setVista('semana')}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition ${
+                vista === 'semana' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <CalendarRange className="h-3.5 w-3.5" /> Semana
             </button>
             <button
               type="button"
@@ -645,6 +738,76 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
             )}
           </div>
         </div>
+      ) : vista === 'semana' ? (
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => cambiarTimeline(-1)}
+              className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100"
+              aria-label={granularidadTimeline === 'dia' ? 'Día anterior' : 'Semana anterior'}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <h2 className="text-sm font-semibold capitalize text-gray-800">{etiquetaTimeline}</h2>
+              <button
+                type="button"
+                onClick={irAHoyTimeline}
+                className="rounded-full border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
+              >
+                Hoy
+              </button>
+              <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setGranularidadTimeline('semana')}
+                  className={`rounded px-2 py-1 text-xs font-medium transition ${
+                    granularidadTimeline === 'semana' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'
+                  }`}
+                >
+                  Semana
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGranularidadTimeline('dia')}
+                  className={`rounded px-2 py-1 text-xs font-medium transition ${
+                    granularidadTimeline === 'dia' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'
+                  }`}
+                >
+                  Día
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => cambiarTimeline(1)}
+              className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100"
+              aria-label={granularidadTimeline === 'dia' ? 'Día siguiente' : 'Semana siguiente'}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          <VistaTimeline
+            dias={diasTimeline}
+            granularidad={granularidadTimeline}
+            eventosPorDia={eventosPorDia}
+            ocupacionPorDia={ocupacionPorDia}
+            plazas={plazas}
+            ahora={ahora}
+            onClickDia={(dia) => {
+              setGranularidadTimeline('dia');
+              setFechaTimeline(dia);
+            }}
+          />
+
+          <p className="mt-3 border-t border-gray-100 pt-3 text-[11px] text-gray-500">
+            Las citas se colocan según su hora de inicio real; la duración es una estimación por tipo de
+            servicio (no se guarda la duración real de cada cita). Pulsa un día de la semana para ver su
+            detalle por horas.
+          </p>
+        </div>
       ) : (
         <div className="space-y-6">
           <div className="flex justify-end">
@@ -714,6 +877,163 @@ function TarjetaEvento({ evento }: { evento: EventoAgenda }) {
           <Phone className="h-3 w-3" /> {evento.clienteTelefono}
         </a>
       )}
+    </div>
+  );
+}
+
+/**
+ * Vista "Semana"/"Día" (batch 23): línea de tiempo con las citas colocadas
+ * por su hora de inicio real y su duración estimada (`duracionMinutos`),
+ * en vez de solo listarlas — el hueco que tenía la Agenda frente a las
+ * vistas Mes/Lista, que no dejaban ver de un vistazo cómo queda el día
+ * ocupado hora a hora. Hecha a mano con `<div>`s posicionados de forma
+ * absoluta dentro de una columna por día (sin ninguna librería de
+ * calendario), igual que el resto de esta pantalla.
+ */
+function VistaTimeline({
+  dias,
+  granularidad,
+  eventosPorDia,
+  ocupacionPorDia,
+  plazas,
+  ahora,
+  onClickDia,
+}: {
+  dias: Date[];
+  granularidad: 'semana' | 'dia';
+  eventosPorDia: Map<string, EventoAgenda[]>;
+  ocupacionPorDia: Map<string, Map<number, number>>;
+  plazas: number;
+  ahora: number;
+  onClickDia: (dia: Date) => void;
+}) {
+  const horas = Array.from({ length: HORA_CIERRE - HORA_APERTURA }, (_, i) => HORA_APERTURA + i);
+  const alturaTotal = (HORA_CIERRE - HORA_APERTURA) * ALTURA_HORA_PX;
+  const hoyClave = claveFechaLocal(new Date());
+
+  // La línea roja de "ahora" solo se pinta en la columna de hoy, y solo si
+  // la hora actual cae dentro del horario de apertura mostrado.
+  const ahoraDate = new Date(ahora);
+  const minutosAhora = ahoraDate.getHours() * 60 + ahoraDate.getMinutes() - HORA_APERTURA * 60;
+  const mostrarLineaAhora = minutosAhora >= 0 && minutosAhora <= (HORA_CIERRE - HORA_APERTURA) * 60;
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[520px]">
+        <div
+          className="grid border-b border-gray-100"
+          style={{ gridTemplateColumns: `52px repeat(${dias.length}, minmax(0,1fr))` }}
+        >
+          <div />
+          {dias.map((dia) => {
+            const clave = claveFechaLocal(dia);
+            const color = colorDia(ocupacionPorDia.get(clave), plazas);
+            const esHoy = clave === hoyClave;
+            return (
+              <button
+                key={clave}
+                type="button"
+                onClick={() => onClickDia(dia)}
+                disabled={granularidad === 'dia'}
+                className={`flex flex-col items-center gap-0.5 border-l border-gray-100 py-2 text-xs ${
+                  granularidad === 'semana' ? 'cursor-pointer hover:bg-gray-50' : 'cursor-default'
+                }`}
+              >
+                <span className="uppercase text-gray-400">
+                  {dia.toLocaleDateString('es-ES', { weekday: 'short' })}
+                </span>
+                <span
+                  className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-semibold ${
+                    esHoy ? 'bg-indigo-600 text-white' : 'text-gray-700'
+                  }`}
+                >
+                  {dia.getDate()}
+                </span>
+                <span className={`h-1.5 w-1.5 rounded-full ${PUNTO_COLOR_DIA[color]}`} />
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid" style={{ gridTemplateColumns: `52px repeat(${dias.length}, minmax(0,1fr))` }}>
+          <div className="relative" style={{ height: alturaTotal }}>
+            {horas.map((h) => (
+              <span
+                key={h}
+                className="absolute right-0 -translate-y-1/2 pr-1.5 text-right text-[10px] text-gray-400"
+                style={{ top: (h - HORA_APERTURA) * ALTURA_HORA_PX }}
+              >
+                {String(h).padStart(2, '0')}:00
+              </span>
+            ))}
+          </div>
+          {dias.map((dia) => {
+            const clave = claveFechaLocal(dia);
+            const eventosDia = eventosPorDia.get(clave) ?? [];
+            const { bloques, totalCols } = distribuirColumnas(eventosDia);
+            const esHoy = clave === hoyClave;
+            return (
+              <div key={clave} className="relative border-l border-gray-100" style={{ height: alturaTotal }}>
+                {horas.map((h) => (
+                  <div
+                    key={h}
+                    className="absolute inset-x-0 border-t border-gray-100"
+                    style={{ top: (h - HORA_APERTURA) * ALTURA_HORA_PX }}
+                  />
+                ))}
+                {esHoy && mostrarLineaAhora && (
+                  <div
+                    className="absolute inset-x-0 z-10 border-t-2 border-red-400"
+                    style={{ top: (minutosAhora / 60) * ALTURA_HORA_PX }}
+                  />
+                )}
+                {eventosDia.length === 0 && (
+                  <span className="absolute inset-0 flex items-center justify-center text-[11px] text-gray-300">
+                    —
+                  </span>
+                )}
+                {bloques.map(({ evento, col }) => {
+                  const fecha = new Date(evento.fecha);
+                  const inicioMin = Math.max(0, fecha.getHours() * 60 + fecha.getMinutes() - HORA_APERTURA * 60);
+                  const duracionMin = duracionMinutos(evento);
+                  const alturaMin = Math.max(
+                    15,
+                    Math.min(duracionMin, (HORA_CIERRE - HORA_APERTURA) * 60 - inicioMin),
+                  );
+                  return (
+                    <div
+                      key={evento.id}
+                      title={`${fecha.toLocaleTimeString('es-ES', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })} · ${evento.tipo === 'checkin' ? 'Traída (check-in)' : 'Recogida'} · ${
+                        evento.matricula ?? '—'
+                      } · ${evento.clienteNombre}`}
+                      className={`absolute overflow-hidden rounded-md border px-1.5 py-0.5 text-left text-[10px] leading-tight shadow-sm ${
+                        evento.tipo === 'checkin'
+                          ? 'border-sky-300 bg-sky-100 text-sky-800'
+                          : 'border-emerald-300 bg-emerald-100 text-emerald-800'
+                      }`}
+                      style={{
+                        top: (inicioMin / 60) * ALTURA_HORA_PX,
+                        height: (alturaMin / 60) * ALTURA_HORA_PX - 2,
+                        left: `calc(${(col / totalCols) * 100}% + 1px)`,
+                        width: `calc(${100 / totalCols}% - 2px)`,
+                      }}
+                    >
+                      <p className="truncate font-semibold">
+                        {fecha.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}{' '}
+                        {evento.clienteNombre}
+                      </p>
+                      <p className="truncate text-[9px] opacity-80">{evento.matricula ?? '—'}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

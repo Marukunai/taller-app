@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Car, ClipboardList, ExternalLink, Gauge, Loader2, Search } from 'lucide-react';
+import { Car, ClipboardList, ExternalLink, Gauge, Loader2, Search, TrendingUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { EstadoOrden, TipoServicio } from '../lib/types';
 
@@ -44,6 +44,11 @@ const ETIQUETAS_SERVICIO: Record<TipoServicio, string> = {
 const SELECT_ORDENES_HISTORIAL =
   'id, estado, tipo_servicio, descripcion_averia, fecha_entrada, fecha_entrega, motivo_cancelacion, ' +
   'pdf_salida_url, inspecciones_entrada(kilometraje, pdf_informe_url)';
+
+/** Nº mínimo de lecturas de kilometraje (de visitas distintas) para poder
+ *  calcular un ritmo medio real de este vehículo — igual criterio que en
+ *  ProximasRevisiones.tsx (batch 23), aunque aquí es solo informativo. */
+const MIN_LECTURAS_PARA_RITMO_REAL = 2;
 
 interface HistorialVehiculoProps {
   /** Matrícula a buscar automáticamente al montar — se rellena desde el
@@ -115,6 +120,29 @@ export default function HistorialVehiculo({ matriculaInicial }: HistorialVehicul
     void buscar(matricula.trim());
   };
 
+  // Ritmo medio real de este vehículo (batch 23) — mismo cálculo que
+  // `ritmoAnualVehiculo` en ProximasRevisiones.tsx (primera y última
+  // lectura de kilometraje conocidas), pero aquí es puramente informativo:
+  // no decide si "toca revisión", solo se muestra como dato de contexto ya
+  // que esta pantalla es la que junta todo el historial de un vehículo.
+  const ritmoKmReal = useMemo(() => {
+    const lecturas = ordenes
+      .filter((o): o is OrdenHistorial & { fecha_entrada: string } => Boolean(o.fecha_entrada && o.inspecciones_entrada?.[0]))
+      .map((o) => ({ fecha: new Date(o.fecha_entrada).getTime(), km: o.inspecciones_entrada![0].kilometraje }))
+      .sort((a, b) => a.fecha - b.fecha);
+    if (lecturas.length < MIN_LECTURAS_PARA_RITMO_REAL) return null;
+    const primera = lecturas[0];
+    const ultima = lecturas[lecturas.length - 1];
+    const dias = (ultima.fecha - primera.fecha) / (1000 * 60 * 60 * 24);
+    const km = ultima.km - primera.km;
+    if (dias < 1 || km < 0) return null;
+    return {
+      kmAnual: Math.round((km * 365) / dias),
+      dias: Math.round(dias),
+      numLecturas: lecturas.length,
+    };
+  }, [ordenes]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (matriculaInicial) void buscar(matriculaInicial.trim());
@@ -179,6 +207,16 @@ export default function HistorialVehiculo({ matriculaInicial }: HistorialVehicul
               </p>
             )}
           </div>
+
+          {ritmoKmReal && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              <TrendingUp className="h-4 w-4 shrink-0" />
+              <p>
+                Ritmo medio real: ~{ritmoKmReal.kmAnual.toLocaleString('es-ES')} km/año (calculado con{' '}
+                {ritmoKmReal.numLecturas} visitas en {ritmoKmReal.dias} días).
+              </p>
+            </div>
+          )}
 
           {ordenes.length === 0 ? (
             <p className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">

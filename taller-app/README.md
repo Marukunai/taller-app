@@ -1207,3 +1207,40 @@ Supabase.
   Ahora las 2 columnas y la fila horizontal solo entran en juego a partir
   de una pantalla más ancha (`lg`, 1024px); por debajo, cada tarjeta va a
   ancho completo y se apila en dos filas como en móvil.
+
+## 35. Batch 23: vista Semana/Día en la Agenda + kilometraje real por vehículo
+
+No requiere ninguna migración SQL — son cambios de frontend que reutilizan
+datos que la app ya guardaba (`inspecciones_entrada.kilometraje`) o ya
+consultaba (las citas de la Agenda).
+
+- **Vista "Semana" en la Agenda** (`AgendaPanel.tsx`), junto a las vistas
+  "Mes" y "Lista" que ya existían. Es una línea de tiempo hecha a mano
+  (sin ninguna librería de calendario, igual que el resto de la Agenda):
+  una columna por día con las citas colocadas como bloques según su hora
+  de inicio real y su duración estimada por tipo de servicio (la misma
+  estimación que ya usaba la vista Mes — la app no guarda cuánto dura
+  cada cita). Incluye:
+  - Alternar entre **Semana** (7 días, lunes a domingo) y **Día** (uno
+    solo) con un interruptor junto a la fecha; pulsar la cabecera de un
+    día en la vista semanal salta directo a su vista de un solo día.
+  - Citas que se solapan en el tiempo se colocan una al lado de otra en
+    vez de taparse.
+  - Línea roja de "ahora" en la columna de hoy, dentro del horario de
+    apertura.
+  - Cabeceras de cada día coloreadas con el mismo criterio verde/naranja/
+    rojo que la vista Mes (franjas horarias vs. plazas simultáneas).
+- **Kilometraje: estimación por ritmo REAL del vehículo**, no solo el
+  valor genérico de 15.000 km/año. En "Próximas revisiones"
+  (`ProximasRevisiones.tsx`), cuando un vehículo ya tiene al menos 2
+  visitas con kilometraje registrado, el ritmo anual usado para estimar
+  cuánto ha rodado desde su última visita se calcula a partir de sus
+  propias lecturas (primera y última conocidas), en vez de asumir
+  15.000 km/año para todos por igual. Se indica en cada ficha si la cifra
+  es "real" (con cuántas visitas se calculó) o sigue siendo la
+  estimación genérica por falta de historial. En "Historial de vehículo"
+  (`HistorialVehiculo.tsx`) se muestra además, de forma puramente
+  informativa, el ritmo medio real calculado con todo el historial de
+  visitas de ese vehículo. Ningún dato nuevo que guardar: todo sale del
+  kilometraje que ya se registraba en cada check-in
+  (`inspecciones_entrada.kilometraje`, ver `InspectionForm.tsx`).

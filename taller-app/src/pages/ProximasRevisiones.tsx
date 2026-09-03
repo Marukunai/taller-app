@@ -11,14 +11,20 @@ const UMBRAL_DIAS = 365;
  *  que el vehículo ha recorrido 15.000 km desde la última visita. */
 const UMBRAL_KM = 15000;
 
-/** Kilometraje anual ASUMIDO para estimar cuánto ha rodado un vehículo
- *  desde su última visita — la app no tiene forma de conocer el
- *  kilometraje actual real (no hay ningún dispositivo conectado al
- *  coche), así que se estima de forma lineal a partir del kilometraje
- *  registrado en su última inspección de entrada y el tiempo transcurrido
- *  desde entonces. Es una aproximación, no un dato exacto — se muestra
- *  siempre junto con el criterio de tiempo para que quede claro. */
+/** Kilometraje anual ASUMIDO — usado como valor de RESPALDO cuando un
+ *  vehículo todavía no tiene suficiente historial propio (batch 23: antes
+ *  era el único criterio, ahora solo se usa si hay menos de 2 lecturas
+ *  reales de kilometraje). La app no tiene forma de conocer el kilometraje
+ *  actual real (no hay ningún dispositivo conectado al coche), así que se
+ *  sigue estimando de forma lineal — a partir del ritmo real del vehículo
+ *  cuando se conoce, o de este valor genérico si no. Es una aproximación,
+ *  no un dato exacto — se muestra siempre junto con el criterio de tiempo
+ *  para que quede claro. */
 const KM_ANUALES_ESTIMADOS = 15000;
+
+/** Nº mínimo de lecturas reales de kilometraje (de distintas visitas) para
+ *  calcular un ritmo propio del vehículo en vez de usar `KM_ANUALES_ESTIMADOS`. */
+const MIN_LECTURAS_PARA_HISTORIAL_REAL = 2;
 
 interface FilaOrden {
   vehiculo_id: string;
@@ -50,6 +56,15 @@ interface VehiculoRevision {
   tocaPorTiempo: boolean;
   tocaPorKm: boolean;
   avisoAnualAceptado: boolean;
+  /** Ritmo anual usado para la estimación de km — el real del vehículo
+   *  (batch 23) cuando hay suficiente historial, o `KM_ANUALES_ESTIMADOS`
+   *  si no. */
+  kmAnualUsado: number;
+  /** true si `kmAnualUsado` viene del historial real de este vehículo (≥2
+   *  lecturas de kilometraje en visitas distintas), false si es el valor
+   *  genérico de respaldo. */
+  estimacionReal: boolean;
+  numLecturasHistoricas: number;
 }
 
 const SELECT_ULTIMA_VISITA =
@@ -102,6 +117,43 @@ export default function ProximasRevisiones() {
     cargar();
   }, [cargar]);
 
+  // Historial real de kilometraje por vehículo (batch 23): `filas` ya trae
+  // TODAS las órdenes con fecha de entrada (no solo la última de cada
+  // vehículo, eso se filtra más abajo), así que el ritmo real de cada
+  // vehículo sale gratis de los mismos datos que ya se estaban pidiendo —
+  // no hace falta ninguna consulta nueva a Supabase.
+  const historialKmPorVehiculo = useMemo(() => {
+    const mapa = new Map<string, { fecha: number; km: number }[]>();
+    for (const fila of filas) {
+      const km = fila.inspecciones_entrada?.[0]?.kilometraje;
+      if (!fila.vehiculo_id || !fila.fecha_entrada || km == null) continue;
+      const lista = mapa.get(fila.vehiculo_id) ?? [];
+      lista.push({ fecha: new Date(fila.fecha_entrada).getTime(), km });
+      mapa.set(fila.vehiculo_id, lista);
+    }
+    for (const lista of mapa.values()) lista.sort((a, b) => a.fecha - b.fecha);
+    return mapa;
+  }, [filas]);
+
+  /** Ritmo anual (km/año) de un vehículo a partir de su historial real:
+   *  compara la primera y la última lectura conocidas. Si hay menos de 2
+   *  lecturas, o las fechas/km no son coherentes (mismo día, o kilometraje
+   *  que "baja" por un error de tecleo), se usa el valor genérico de
+   *  respaldo en su lugar. */
+  const ritmoAnualVehiculo = useCallback((vehiculoId: string): { kmAnual: number; real: boolean; numLecturas: number } => {
+    const historial = historialKmPorVehiculo.get(vehiculoId) ?? [];
+    if (historial.length >= MIN_LECTURAS_PARA_HISTORIAL_REAL) {
+      const primera = historial[0];
+      const ultima = historial[historial.length - 1];
+      const dias = (ultima.fecha - primera.fecha) / (1000 * 60 * 60 * 24);
+      const km = ultima.km - primera.km;
+      if (dias >= 1 && km >= 0) {
+        return { kmAnual: Math.round((km * 365) / dias), real: true, numLecturas: historial.length };
+      }
+    }
+    return { kmAnual: KM_ANUALES_ESTIMADOS, real: false, numLecturas: historial.length };
+  }, [historialKmPorVehiculo]);
+
   const vehiculos = useMemo(() => {
     // "Última visita por vehículo": como las filas ya vienen ordenadas por
     // fecha_entrada descendente, la primera fila que se ve de cada
@@ -119,7 +171,8 @@ export default function ProximasRevisiones() {
       const fechaVisita = new Date(fila.fecha_entrada).getTime();
       const diasTranscurridos = Math.floor((ahora - fechaVisita) / (1000 * 60 * 60 * 24));
       const kmUltimaVisita = fila.inspecciones_entrada?.[0]?.kilometraje ?? null;
-      const kmEstimadoRecorridos = Math.round((KM_ANUALES_ESTIMADOS * diasTranscurridos) / 365);
+      const { kmAnual, real, numLecturas } = ritmoAnualVehiculo(fila.vehiculo_id);
+      const kmEstimadoRecorridos = Math.round((kmAnual * diasTranscurridos) / 365);
       const kmEstimadoActual = kmUltimaVisita !== null ? kmUltimaVisita + kmEstimadoRecorridos : null;
 
       const tocaPorTiempo = diasTranscurridos >= UMBRAL_DIAS;
@@ -141,12 +194,15 @@ export default function ProximasRevisiones() {
         tocaPorTiempo,
         tocaPorKm,
         avisoAnualAceptado: fila.vehiculos?.aviso_anual_aceptado ?? false,
+        kmAnualUsado: kmAnual,
+        estimacionReal: real,
+        numLecturasHistoricas: numLecturas,
       });
     }
 
     // Los más "atrasados" primero (más días desde la última visita).
     return resultado.sort((a, b) => b.diasTranscurridos - a.diasTranscurridos);
-  }, [filas, cargadoEn]);
+  }, [filas, cargadoEn, ritmoAnualVehiculo]);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
@@ -174,10 +230,13 @@ export default function ProximasRevisiones() {
         <Info className="h-4 w-4 shrink-0" />
         <p>
           Un vehículo aparece aquí si han pasado más de 12 meses desde su última visita, O si se
-          estima (asumiendo {KM_ANUALES_ESTIMADOS.toLocaleString('es-ES')} km/año desde el
-          kilometraje de su última entrada) que ha recorrido más de {UMBRAL_KM.toLocaleString('es-ES')}{' '}
-          km desde entonces. El kilometraje es una ESTIMACIÓN, no un dato real — la app no puede
-          conocer el kilometraje actual de un vehículo que no está en el taller.
+          estima que ha recorrido más de {UMBRAL_KM.toLocaleString('es-ES')} km desde entonces. Esa
+          estimación usa el RITMO REAL del propio vehículo (calculado con sus lecturas de
+          kilometraje de visitas anteriores) cuando ya tiene al menos {MIN_LECTURAS_PARA_HISTORIAL_REAL}{' '}
+          visitas con kilometraje registrado; si todavía no hay suficiente historial, se asume un
+          valor genérico de {KM_ANUALES_ESTIMADOS.toLocaleString('es-ES')} km/año. En cualquier caso
+          es una ESTIMACIÓN, no un dato real — la app no puede conocer el kilometraje actual de un
+          vehículo que no está en el taller.
         </p>
       </div>
 
@@ -242,6 +301,16 @@ export default function ProximasRevisiones() {
                     {v.kmUltimaVisita.toLocaleString('es-ES')} km al entrar
                     {v.kmEstimadoActual !== null &&
                       ` · ~${v.kmEstimadoActual.toLocaleString('es-ES')} km estimados ahora`}
+                    {v.estimacionReal ? (
+                      <span
+                        className="ml-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+                        title={`Calculado con ${v.numLecturasHistoricas} visitas anteriores de este vehículo`}
+                      >
+                        ~{v.kmAnualUsado.toLocaleString('es-ES')} km/año reales
+                      </span>
+                    ) : (
+                      <span className="ml-1 text-gray-400">(estimación genérica, sin historial suficiente)</span>
+                    )}
                   </span>
                 )}
               </div>
