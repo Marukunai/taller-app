@@ -166,6 +166,7 @@ proyecto Supabase (**Project Settings → API**):
 ```
 VITE_SUPABASE_URL=https://TU-PROYECTO.supabase.co
 VITE_SUPABASE_ANON_KEY=TU_CLAVE_ANON_PUBLIC
+VITE_SITE_URL=https://TU-DOMINIO.vercel.app
 ```
 
 > ⚠️ **Importante:** usa siempre la clave **`anon` / `public`**, nunca la
@@ -173,6 +174,15 @@ VITE_SUPABASE_ANON_KEY=TU_CLAVE_ANON_PUBLIC
 > al navegador, así que cualquier clave que pongas aquí queda expuesta
 > públicamente. La clave `service_role` salta la Row Level Security y no debe
 > usarse jamás en el frontend.
+>
+> `VITE_SITE_URL` (sin barra final) es la URL pública desde la que se sirve
+> ESTA instalación — `index.html` la usa para las etiquetas Open Graph/
+> Twitter Card (sección 22), con la sintaxis `%VITE_SITE_URL%` que Vite
+> sustituye en build. Así, si algún día despliegas otra instalación de la
+> app en otro dominio (por ejemplo, para un taller cliente distinto — ver
+> `DESPLIEGUE_TALLER_NUEVO.md`), basta con poner un valor distinto de esta
+> variable en ese proyecto de Vercel; no hace falta tocar `index.html` a
+> mano ni mantener una copia distinta del código por cliente.
 
 ## 4. Instalación y arranque
 
@@ -726,9 +736,11 @@ despliegue automático cada vez que se hace push a `main`:
    Directory"** y selecciona la carpeta `taller-app` — si no, el build
    falla porque Vercel busca el `package.json` en la raíz del repo.
 3. Añade las variables de entorno del paso 3 de este README
-   (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) en **Project Settings →
-   Environment Variables** — Vercel no lee `.env.local` (normalmente ni se
-   sube al repositorio).
+   (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_SITE_URL`) en
+   **Project Settings → Environment Variables** — Vercel no lee
+   `.env.local` (normalmente ni se sube al repositorio). Para
+   `VITE_SITE_URL` de entrada pon un valor cualquiera (lo corriges en el
+   paso 5, cuando ya sepas la URL definitiva).
 4. Pulsa **Deploy**. Al terminar, Vercel da una URL del tipo
    `tallergo.vercel.app` (o `taller-app-xxxx.vercel.app` si el nombre ya
    está cogido — se puede cambiar después en **Settings → Domains**).
@@ -737,14 +749,20 @@ despliegue automático cada vez que se hace push a `main`:
      Supabase (sección 2, paso 5 de este README), sin quitar
      `http://localhost:5173` — si no, la recuperación de contraseña
      (sección 20) no funcionará en producción.
-   - Actualiza el dominio en las etiquetas `og:image`, `og:url`,
-     `twitter:image` de `index.html` (ver sección 22 más abajo) — si no, la
-     vista previa al compartir el enlace por WhatsApp no encontrará la
-     imagen.
+   - Pon esa misma URL en la variable de entorno `VITE_SITE_URL` de este
+     proyecto de Vercel y vuelve a desplegar — `index.html` la usa para
+     las etiquetas `og:image`/`og:url`/`twitter:image` (sección 22 más
+     abajo); no hace falta editar `index.html` a mano.
 
 **Estado actual del despliegue**: la app ya está en producción en
-`https://taller-app-bay-tau.vercel.app`, con las etiquetas Open Graph de
-`index.html` apuntando a ese dominio.
+`https://taller-app-bay-tau.vercel.app`, con `VITE_SITE_URL` apuntando a
+ese dominio.
+
+**¿Vas a desplegar esto para un taller cliente distinto al tuyo (no solo
+un cambio de dominio del tuyo)?** Sigue en su lugar
+[`DESPLIEGUE_TALLER_NUEVO.md`](./DESPLIEGUE_TALLER_NUEVO.md) — es este
+mismo proceso más los pasos de Supabase que le faltan (proyecto nuevo,
+Edge Functions, etc.), en el orden correcto.
 
 ## 22. Vista previa al compartir por WhatsApp/redes sociales
 
@@ -755,12 +773,15 @@ despliegue automático cada vez que se hace push a `main`:
 por WhatsApp, Telegram o redes sociales aparezca una tarjeta con el
 logo/nombre de TallerGo en vez de un enlace pelado. Estas etiquetas
 necesitan una URL absoluta para que WhatsApp pueda descargar la imagen —
-actualmente apuntan a `https://taller-app-bay-tau.vercel.app`, el dominio
-real ya desplegado. Si en el futuro cambias de dominio (por ejemplo, al
-añadir uno propio en **Settings → Domains** de Vercel), recuerda actualizar
-las URLs de `og:image`/`og:url`/`twitter:image` en `index.html` y volver a
-desplegar. Tras cualquier cambio de dominio, conviene comprobar la vista
-previa con una herramienta como el
+`og:image`/`og:url`/`twitter:image` usan `%VITE_SITE_URL%`, que Vite
+sustituye en build por la variable de entorno del mismo nombre (sección 3)
+— así que **no hay que tocar `index.html` a mano** al cambiar de dominio
+(por ejemplo, al añadir uno propio en **Settings → Domains** de Vercel, o
+al desplegar otra instalación de la app para un taller cliente distinto —
+ver `DESPLIEGUE_TALLER_NUEVO.md`): basta con cambiar `VITE_SITE_URL` en
+las variables de entorno de ESE proyecto de Vercel y volver a desplegar.
+Tras cualquier cambio de dominio, conviene comprobar la vista previa con
+una herramienta como el
 [Sharing Debugger de Facebook](https://developers.facebook.com/tools/debug/)
 (WhatsApp reutiliza el mismo sistema de rastreo de Open Graph), ya que
 WhatsApp cachea la primera vista previa que ve de una URL.
