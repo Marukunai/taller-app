@@ -1028,3 +1028,73 @@ haya que cambiar más adelante) también se puede fijar/editar después, desde
 - De cara a más adelante: modelo de suscripción por mensualidad, y qué
   implicaría dar servicio a varios talleres distintos desde la misma app
   (aislar la base de datos de cada uno).
+
+## 32. Batch 20: mejoras varias sobre el MVP en producción
+
+Ronda de mejoras pedida directamente por el usuario ya con la app en
+producción, sin tocar nada de lo aparcado a propósito (suscripción/
+multi-tenant, envío automático real del aviso anual). Requiere ejecutar
+**`supabase/batch20_migration.sql`** en el SQL Editor de Supabase antes de
+usarlas — hasta entonces, cada pieza nueva falla en silencio (sin romper el
+resto de la app) y simplemente no aparece nada, igual que otras migraciones
+anteriores de este README.
+
+**Más visual para el cliente (Portal):**
+- **Barra de progreso** (Solicitado → Recepcionado → En proceso → Listo →
+  Entregado) en vez de un simple texto de estado, en cuanto la solicitud
+  está aceptada — sustituye al aviso genérico de "trae el vehículo cuando
+  acordéis". Un estado 'cancelado' se muestra aparte, no como un paso más.
+- El cliente ya puede ver, dentro de su propia tarjeta de solicitud, el
+  **informe de entrada** (miniaturas de las fotos + el mismo esquema de
+  daños rasterizado que lleva el PDF, reutilizando `renderDamageSchemaImage`
+  — no repite el editor interactivo, es de solo lectura) con enlace al PDF
+  completo, y el **PDF de entrega** en cuanto existe — sin depender solo de
+  WhatsApp/email.
+- **Aviso en tiempo real** (badge tipo toast, arriba a la derecha) cuando
+  cambia el estado de su orden, aprovechando Realtime — se añadió
+  `ordenes_trabajo` a la publicación `supabase_realtime` (como ya estaba
+  `solicitudes`). El "antes/después" para decidir si avisar se compara
+  contra lo que la propia app ya tenía cargado (no contra `payload.old` de
+  Postgres, que por defecto solo trae la clave primaria de la fila
+  anterior, no todas las columnas).
+- **Valoración rápida** (1 a 5 estrellas + comentario opcional) que el
+  cliente puede dejar desde el Portal en cuanto su orden está "Entregado" —
+  visible para el encargado en la columna "Entregado" del Panel de gestión.
+  Solo se puede enviar una vez: lo impide un trigger en base de datos
+  (`bloquear_cambio_cliente_orden`), no solo la interfaz — un cliente con
+  acceso directo a la API tampoco podría tocar ninguna otra columna de su
+  propia orden aprovechando este permiso nuevo de UPDATE.
+
+**Funcionalidad de gestión:**
+- **Marcar un presupuesto/factura como pagado**, desde el propio modal de
+  Presupuesto (junto a la etiqueta de estado) — independiente de `estado`
+  (se puede cobrar antes de que el cliente lo apruebe formalmente, por
+  ejemplo por teléfono). Se ve también como una etiqueta "Pagado" en la
+  tarjeta del Panel de gestión.
+- **Checkbox de consentimiento RGPD**, obligatorio, en el formulario de
+  "Nueva solicitud" del Portal de cliente — se guarda con fecha
+  (`rgpd_aceptado` / `rgpd_aceptado_en` en `solicitudes`). Solo aplica a las
+  solicitudes que crea el propio cliente desde su cuenta; las que registra
+  el personal desde "Solicitud de cita" no llevan este checkbox (no hay
+  ningún dato que el cliente esté introduciendo él mismo ahí).
+- **Filtros en el Panel de gestión**: fecha de entrada (desde/hasta), tipo
+  de servicio y mecánico asignado — se aplican en el propio cliente sobre
+  las órdenes ya cargadas, sin volver a consultar Supabase por cada cambio.
+- **Mecánico asignado** por orden (columna nueva `mecanico_asignado_id` en
+  `ordenes_trabajo`, solo de seguimiento/filtro — no restringe quién puede
+  trabajar en la orden) — selector en cada tarjeta, visible solo para
+  encargado/dueño/admin. El listado de mecánicos sale de `perfiles` con
+  `rol = 'mecanico'` y `activo = true`.
+- **Exportar `.ics`** de la cita de recogida (`ordenes_trabajo.cita_
+  recogida`, cuando la orden está "Listo") y de la cita propuesta de
+  check-in (`solicitudes.fecha_cita_checkin`) — botón "Añadir a mi
+  calendario" en el Portal, sin ninguna librería nueva (`src/lib/ics.ts`
+  genera el archivo a mano y dispara la descarga con un Blob).
+
+**Acceso de lectura del cliente ampliado:** hasta este batch, un cliente NO
+podía leer nada de `ordenes_trabajo` ni `inspecciones_entrada` (única
+política: "Personal Ordenes"/"Personal Inspecciones"). Las políticas nuevas
+("Cliente ve su propia orden" / "Cliente ve su propia inspección de
+entrada") siguen el mismo patrón ya usado en `presupuestos`: solo por
+`solicitud_id` + `solicitudes.cliente_auth_id`, nunca dan acceso a nada de
+otro cliente.

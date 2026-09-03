@@ -2,13 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowRight,
   Car,
+  CheckCircle2,
   Euro,
+  Filter,
   ImageOff,
   Loader2,
   Phone,
   RefreshCw,
+  Star,
   Truck,
   Undo2,
+  User,
   Wrench,
   XCircle,
 } from 'lucide-react';
@@ -107,6 +111,10 @@ interface OrdenPanel {
   fecha_devolucion_repuesto_prevista: string | null;
   coches_repuesto: { matricula: string; marca: string | null; modelo: string | null } | null;
   solicitud_id: string | null;
+  // Mecánico asignado y valoración del cliente (batch 20).
+  mecanico_asignado_id: string | null;
+  valoracion_estrellas: number | null;
+  valoracion_comentario: string | null;
 }
 
 interface ManagementPanelProps {
@@ -139,7 +147,8 @@ const SELECT_ORDENES =
   'inspecciones_entrada(fotos_urls), piezas_usadas(id), ' +
   'solicitudes(nombre_cliente, telefono_cliente, email_cliente, matricula, marca, modelo), ' +
   'coche_repuesto_id, fecha_devolucion_repuesto, fecha_devolucion_repuesto_prevista, ' +
-  'coches_repuesto(matricula, marca, modelo), solicitud_id';
+  'coches_repuesto(matricula, marca, modelo), solicitud_id, ' +
+  'mecanico_asignado_id, valoracion_estrellas, valoracion_comentario';
 
 /**
  * Tablero de órdenes de trabajo agrupadas por estado, con un botón por
@@ -168,8 +177,24 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
   // leer `presupuestos` — mejor no intentarlo en absoluto que fallar en
   // silencio en cada fila.
   const [presupuestosPorOrden, setPresupuestosPorOrden] = useState<
-    Record<string, { estado: EstadoPresupuesto }>
+    Record<string, { estado: EstadoPresupuesto; pagado: boolean }>
   >({});
+
+  // Filtros del tablero (batch 20) — se aplican en el propio cliente sobre
+  // las órdenes ya cargadas (mismo enfoque que el resto de la pantalla: se
+  // trae todo de una vez y se reparte por columnas), sin volver a
+  // consultar Supabase por cada cambio de filtro.
+  const [filtroTipoServicio, setFiltroTipoServicio] = useState<TipoServicio | 'todos'>('todos');
+  const [filtroMecanicoId, setFiltroMecanicoId] = useState('todos');
+  const [filtroFechaDesde, setFiltroFechaDesde] = useState('');
+  const [filtroFechaHasta, setFiltroFechaHasta] = useState('');
+
+  // Lista de mecánicos activos, para el selector de "asignar mecánico" de
+  // cada tarjeta (solo esEncargado puede asignar) y para el filtro de
+  // arriba (cualquier personal puede filtrar, aunque no pueda asignar) —
+  // `perfiles` ya es legible por cualquier personal, ver schema.sql.
+  const [mecanicos, setMecanicos] = useState<{ id: string; nombre: string }[]>([]);
+  const [asignandoMecanicoId, setAsignandoMecanicoId] = useState<string | null>(null);
 
   const cargarOrdenes = useCallback(async () => {
     setCargando(true);
@@ -196,12 +221,12 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
 
   const cargarPresupuestos = useCallback(async () => {
     if (!esEncargado) return;
-    const { data, error: fetchError } = await supabase.from('presupuestos').select('orden_id, estado');
+    const { data, error: fetchError } = await supabase.from('presupuestos').select('orden_id, estado, pagado');
     if (fetchError) return; // sin ruido: la migración puede no estar aplicada todavía
-    const mapa: Record<string, { estado: EstadoPresupuesto }> = {};
+    const mapa: Record<string, { estado: EstadoPresupuesto; pagado: boolean }> = {};
     for (const fila of data ?? []) {
-      const f = fila as { orden_id: string; estado: EstadoPresupuesto };
-      mapa[f.orden_id] = { estado: f.estado };
+      const f = fila as { orden_id: string; estado: EstadoPresupuesto; pagado: boolean | null };
+      mapa[f.orden_id] = { estado: f.estado, pagado: f.pagado ?? false };
     }
     setPresupuestosPorOrden(mapa);
   }, [esEncargado]);
@@ -210,6 +235,32 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarPresupuestos();
   }, [cargarPresupuestos]);
+
+  // Carga de mecánicos activos — independiente de esEncargado (el filtro de
+  // arriba lo puede usar cualquier personal); si la columna `mecanico_
+  // asignado_id`/migración batch 20 no está aplicada todavía, la consulta
+  // igualmente no falla (perfiles ya existe desde antes), solo devolverá
+  // una lista vacía si no hay ningún mecánico dado de alta.
+  const cargarMecanicos = useCallback(async () => {
+    const { data, error: fetchError } = await supabase
+      .from('perfiles')
+      .select('id, nombre, email')
+      .eq('rol', 'mecanico')
+      .eq('activo', true)
+      .order('nombre', { ascending: true });
+    if (fetchError) return;
+    setMecanicos(
+      (data ?? []).map((fila) => {
+        const p = fila as { id: string; nombre: string | null; email: string | null };
+        return { id: p.id, nombre: p.nombre || p.email || 'Sin nombre' };
+      }),
+    );
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarMecanicos();
+  }, [cargarMecanicos]);
 
   const avanzarEstado = async (orden: OrdenPanel) => {
     const siguiente = SIGUIENTE_ESTADO[orden.estado];
@@ -277,6 +328,48 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
     );
   };
 
+  /** Asigna (o quita, con cadena vacía) el mecánico de una orden — batch 20.
+   *  Solo cambia esa columna, no afecta al estado ni a nada más. */
+  const asignarMecanico = async (orden: OrdenPanel, mecanicoId: string) => {
+    setAsignandoMecanicoId(orden.id);
+    setError(null);
+    const { error: updateError } = await supabase
+      .from('ordenes_trabajo')
+      .update({ mecanico_asignado_id: mecanicoId || null })
+      .eq('id', orden.id);
+    setAsignandoMecanicoId(null);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setOrdenes((prev) =>
+      prev.map((o) => (o.id === orden.id ? { ...o, mecanico_asignado_id: mecanicoId || null } : o)),
+    );
+  };
+
+  // Filtros aplicados sobre las órdenes ya cargadas — ver los 4 useState de
+  // arriba. La comparación de fechas es por prefijo ISO (YYYY-MM-DD),
+  // suficientemente precisa para un filtro de tablero sin complicar el
+  // selector con horas.
+  const ordenesFiltradas = ordenes.filter((o) => {
+    if (filtroTipoServicio !== 'todos' && o.tipo_servicio !== filtroTipoServicio) return false;
+    if (filtroMecanicoId !== 'todos' && (o.mecanico_asignado_id ?? '') !== filtroMecanicoId) return false;
+    if (filtroFechaDesde && (!o.fecha_entrada || o.fecha_entrada < filtroFechaDesde)) return false;
+    if (filtroFechaHasta && (!o.fecha_entrada || o.fecha_entrada > `${filtroFechaHasta}T23:59:59`)) return false;
+    return true;
+  });
+  const hayFiltrosActivos =
+    filtroTipoServicio !== 'todos' ||
+    filtroMecanicoId !== 'todos' ||
+    filtroFechaDesde !== '' ||
+    filtroFechaHasta !== '';
+  const limpiarFiltros = () => {
+    setFiltroTipoServicio('todos');
+    setFiltroMecanicoId('todos');
+    setFiltroFechaDesde('');
+    setFiltroFechaHasta('');
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -296,6 +389,71 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
+      <div className="mb-5 flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-3">
+        <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-500">
+          <Filter className="h-3.5 w-3.5" /> Filtros
+        </span>
+        <div>
+          <label className="mb-1 block text-[11px] font-medium text-gray-500">Desde</label>
+          <input
+            type="date"
+            value={filtroFechaDesde}
+            onChange={(e) => setFiltroFechaDesde(e.target.value)}
+            className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-medium text-gray-500">Hasta</label>
+          <input
+            type="date"
+            value={filtroFechaHasta}
+            onChange={(e) => setFiltroFechaHasta(e.target.value)}
+            className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-medium text-gray-500">Tipo de servicio</label>
+          <select
+            value={filtroTipoServicio}
+            onChange={(e) => setFiltroTipoServicio(e.target.value as TipoServicio | 'todos')}
+            className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700"
+          >
+            <option value="todos">Todos</option>
+            {(Object.entries(ETIQUETAS_SERVICIO) as [TipoServicio, string][]).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {mecanicos.length > 0 && (
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-gray-500">Mecánico</label>
+            <select
+              value={filtroMecanicoId}
+              onChange={(e) => setFiltroMecanicoId(e.target.value)}
+              className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700"
+            >
+              <option value="todos">Todos</option>
+              {mecanicos.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {hayFiltrosActivos && (
+          <button
+            type="button"
+            onClick={limpiarFiltros}
+            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100"
+          >
+            <XCircle className="h-3.5 w-3.5" /> Limpiar filtros
+          </button>
+        )}
+      </div>
+
           {cargando && ordenes.length === 0 ? (
             <p className="flex items-center gap-2 text-sm text-gray-500">
               <Loader2 className="h-4 w-4 animate-spin" /> Cargando órdenes...
@@ -313,7 +471,7 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
               {ESTADOS.filter(
                 (columna) => esEncargado || !ESTADOS_SOLO_ENCARGADO.includes(columna.value),
               ).map((columna) => {
-                const ordenesEstado = ordenes.filter((o) => o.estado === columna.value);
+                const ordenesEstado = ordenesFiltradas.filter((o) => o.estado === columna.value);
                 // "Entregado" oculta (que no borra) los coches entregados
                 // hace más de 3 días — ver OCULTAR_ENTREGADOS_TRAS_MS.
                 const ordenesColumna =
@@ -422,6 +580,45 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                               </p>
                             )}
 
+                            {esEncargado && orden.valoracion_estrellas && (
+                              <div className="rounded-lg bg-yellow-50 px-2 py-1.5 text-xs">
+                                <div className="flex items-center gap-0.5">
+                                  {[1, 2, 3, 4, 5].map((n) => (
+                                    <Star
+                                      key={n}
+                                      className={`h-3.5 w-3.5 ${
+                                        n <= (orden.valoracion_estrellas ?? 0)
+                                          ? 'fill-yellow-400 text-yellow-400'
+                                          : 'text-yellow-200'
+                                      }`}
+                                    />
+                                  ))}
+                                </div>
+                                {orden.valoracion_comentario && (
+                                  <p className="mt-0.5 text-yellow-800">{orden.valoracion_comentario}</p>
+                                )}
+                              </div>
+                            )}
+
+                            {esEncargado && (
+                              <label className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-600">
+                                <User className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                <select
+                                  value={orden.mecanico_asignado_id ?? ''}
+                                  onChange={(e) => asignarMecanico(orden, e.target.value)}
+                                  disabled={asignandoMecanicoId === orden.id}
+                                  className="w-full min-w-0 flex-1 bg-transparent text-gray-700 focus:outline-none disabled:opacity-60"
+                                >
+                                  <option value="">Sin mecánico asignado</option>
+                                  {mecanicos.map((m) => (
+                                    <option key={m.id} value={m.id}>
+                                      {m.nombre}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            )}
+
                             {orden.estado !== 'solicitado' && (
                               <button
                                 type="button"
@@ -453,6 +650,11 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                                   ? ` (${ETIQUETA_PRESUPUESTO_CORTA[presupuestosPorOrden[orden.id].estado]})`
                                   : ''}
                               </button>
+                            )}
+                            {esEncargado && presupuestosPorOrden[orden.id]?.pagado && (
+                              <span className="flex items-center justify-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">
+                                <CheckCircle2 className="h-3 w-3" /> Pagado
+                              </span>
                             )}
 
                             {ESTADOS_CON_VEHICULO_EN_TALLER.includes(orden.estado) &&

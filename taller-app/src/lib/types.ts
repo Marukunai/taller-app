@@ -134,6 +134,19 @@ export interface OrdenTrabajo {
   neumatico_indice_carga: string | null;
   neumatico_indice_velocidad: string | null;
   neumatico_estacion: string | null;
+  // Mecánico del taller asignado a esta orden (batch 20) — opcional, solo
+  // para poder filtrar el Panel de gestión por "quién la lleva"; no
+  // restringe quién puede trabajar en ella (eso lo sigue haciendo RLS a
+  // nivel de "es_personal()", igual que siempre).
+  mecanico_asignado_id: string | null;
+  // Valoración rápida del cliente (batch 20) — 1 a 5 estrellas + comentario
+  // opcional, que el propio cliente deja desde el Portal una vez la orden
+  // está 'entregado' (ver ClientPortal.tsx). Null mientras no la ha dejado
+  // — una vez puesta, no se puede volver a cambiar (ver trigger
+  // bloquear_cambio_cliente_orden en supabase/batch20_migration.sql).
+  valoracion_estrellas: number | null;
+  valoracion_comentario: string | null;
+  valoracion_en: string | null;
 }
 
 export interface InspeccionEntrada {
@@ -310,6 +323,14 @@ export interface Solicitud {
   // elegida al crear la solicitud desde el Portal — con la misma
   // sencillez que la cita de recogida (sin gestión de franjas/aforo).
   fecha_cita_checkin: string | null;
+  // Consentimiento RGPD (batch 20) — el cliente marca una casilla
+  // obligatoria en el Portal antes de enviar la solicitud, aceptando que
+  // el taller trate sus datos de contacto y del vehículo para gestionarla.
+  // Solo se guarda en las solicitudes creadas desde el Portal por el
+  // propio cliente (`rgpd_aceptado_en` queda null en las que registra el
+  // personal desde "Solicitud de cita" — no aplica, no hay checkbox ahí).
+  rgpd_aceptado: boolean;
+  rgpd_aceptado_en: string | null;
 }
 
 /** Precio de un item de inventario — en tabla APARTE de `InventarioItem` a
@@ -341,6 +362,12 @@ export interface Presupuesto {
   enviado_en: string | null;
   respondido_en: string | null;
   factura_pdf_url: string | null;
+  // Si el taller ya ha cobrado este presupuesto/factura (batch 20) — no
+  // tiene ninguna relación con `estado` (un presupuesto puede estar
+  // 'aprobado' sin haberse cobrado todavía, o incluso cobrarse antes de
+  // que el cliente lo apruebe formalmente si vino por teléfono).
+  pagado: boolean;
+  pagado_en: string | null;
 }
 
 /** Línea de detalle de un presupuesto — snapshot del precio en el momento

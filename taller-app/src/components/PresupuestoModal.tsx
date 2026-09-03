@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Euro, Loader2, RefreshCw, Send, X, XCircle } from 'lucide-react';
+import { CheckCircle2, Euro, Loader2, RefreshCw, Send, Wallet, X, XCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { EstadoPresupuesto, Presupuesto, PresupuestoPieza } from '../lib/types';
 
@@ -40,13 +40,17 @@ export default function PresupuestoModal({ open, ordenId, solicitudId, matricula
   const [guardando, setGuardando] = useState(false);
   const [recalculando, setRecalculando] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [marcandoPagado, setMarcandoPagado] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
     setError(null);
     const { data, error: fetchError } = await supabase
       .from('presupuestos')
-      .select('id, orden_id, solicitud_id, concepto_mano_obra, precio_mano_obra, estado, nota_cliente, created_at, enviado_en, respondido_en, factura_pdf_url')
+      .select(
+        'id, orden_id, solicitud_id, concepto_mano_obra, precio_mano_obra, estado, nota_cliente, created_at, ' +
+          'enviado_en, respondido_en, factura_pdf_url, pagado, pagado_en',
+      )
       .eq('orden_id', ordenId)
       .maybeSingle();
     if (fetchError) {
@@ -200,6 +204,25 @@ export default function PresupuestoModal({ open, ordenId, solicitudId, matricula
     setPresupuesto({ ...p, ...cambios });
   };
 
+  /** Marca (o desmarca, por si fue un error) el presupuesto/factura como
+   *  cobrado — batch 20. Independiente de `estado`: el taller puede haber
+   *  cobrado por teléfono/en mano antes de que el cliente lo apruebe
+   *  formalmente, o incluso sin que haya pasado nunca por 'enviado'. */
+  const marcarPagado = async (pagado: boolean) => {
+    const p = await asegurarPresupuesto();
+    if (!p) return;
+    setMarcandoPagado(true);
+    setError(null);
+    const cambios = { pagado, pagado_en: pagado ? new Date().toISOString() : null };
+    const { error: updateError } = await supabase.from('presupuestos').update(cambios).eq('id', p.id);
+    setMarcandoPagado(false);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setPresupuesto({ ...p, ...cambios });
+  };
+
   const totalPiezas = piezas.reduce((acc, p) => acc + p.cantidad * p.precio_unitario, 0);
   const total = totalPiezas + (Number(precioManoObra.replace(',', '.')) || 0);
 
@@ -235,11 +258,28 @@ export default function PresupuestoModal({ open, ordenId, solicitudId, matricula
         ) : (
           <div className="space-y-4">
             {presupuesto && (
-              <span
-                className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${ETIQUETA_ESTADO[presupuesto.estado].clase}`}
-              >
-                {ETIQUETA_ESTADO[presupuesto.estado].texto}
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${ETIQUETA_ESTADO[presupuesto.estado].clase}`}
+                >
+                  {ETIQUETA_ESTADO[presupuesto.estado].texto}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => marcarPagado(!presupuesto.pagado)}
+                  disabled={marcandoPagado}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium disabled:opacity-60 ${
+                    presupuesto.pagado
+                      ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  {marcandoPagado ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wallet className="h-3.5 w-3.5" />}
+                  {presupuesto.pagado
+                    ? `Pagado el ${new Date(presupuesto.pagado_en ?? presupuesto.created_at).toLocaleDateString('es-ES')}`
+                    : 'Marcar como pagado'}
+                </button>
+              </div>
             )}
             {presupuesto?.nota_cliente && (
               <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">

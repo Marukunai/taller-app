@@ -1,18 +1,23 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
+  Bell,
   Calendar,
   CalendarClock,
+  CalendarPlus,
   Car,
+  Check,
   CheckCircle2,
   ClipboardList,
   Euro,
+  FileCheck,
   Loader2,
   LogOut,
   Mail,
   MessageSquareText,
   Phone,
   Send,
+  Star,
   ThumbsDown,
   ThumbsUp,
   Wrench,
@@ -20,7 +25,11 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { FABRICANTES, modelosParaFabricante } from '../lib/vehicleData';
+import { renderDamageSchemaImage } from '../lib/renderDamageSchema';
+import { descargarIcs } from '../lib/ics';
 import type {
+  DanoMarcador,
+  EstadoOrden,
   EstadoSolicitud,
   NeumaticosCantidad,
   Presupuesto,
@@ -81,6 +90,44 @@ const ETIQUETA_ESTADO_PRESUPUESTO: Record<string, { label: string; clase: string
   borrador: { label: 'Presupuesto en preparación', clase: 'bg-gray-100 text-gray-600' },
 };
 
+// Estado de la ORDEN de trabajo que nace al aceptar la solicitud (batch
+// 20) — distinto del estado de la propia solicitud (ESTADO_BADGE de
+// arriba): una solicitud 'aceptada' ya tiene detrás una orden con su
+// propio ciclo de vida (solicitado → recepcionado → en_proceso → listo →
+// entregado, o cancelado), que es lo que de verdad le interesa seguir al
+// cliente día a día — ver SeguimientoOrdenCliente más abajo.
+const ETIQUETA_ESTADO_ORDEN: Record<EstadoOrden, string> = {
+  solicitado: 'Solicitado',
+  recepcionado: 'Recepcionado en el taller',
+  en_proceso: 'En proceso',
+  listo: 'Listo para recoger',
+  entregado: 'Entregado',
+  cancelado: 'Cancelado',
+};
+
+/** Datos de la inspección de entrada que el cliente puede ver de su propia
+ *  orden (batch 20) — mismo shape que `InspeccionEntrada` de types.ts, pero
+ *  solo con los campos que de verdad se muestran aquí. */
+interface InspeccionCliente {
+  fotos_urls: string[] | null;
+  daños_coordenadas: DanoMarcador[] | null;
+  pdf_informe_url: string | null;
+}
+
+/** Orden de trabajo vinculada a una solicitud propia — lo que el cliente
+ *  puede leer de `ordenes_trabajo` gracias a la política "Cliente ve su
+ *  propia orden" (ver supabase/batch20_migration.sql). */
+interface OrdenCliente {
+  id: string;
+  estado: EstadoOrden;
+  solicitud_id: string | null;
+  cita_recogida: string | null;
+  pdf_salida_url: string | null;
+  valoracion_estrellas: number | null;
+  valoracion_comentario: string | null;
+  inspecciones_entrada: InspeccionCliente[] | null;
+}
+
 function euros(n: number): string {
   return `${n.toFixed(2)} €`;
 }
@@ -110,10 +157,35 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
   const [respondiendoId, setRespondiendoId] = useState<string | null>(null);
   const [notaRespuesta, setNotaRespuesta] = useState<Record<string, string>>({});
 
+  // Órdenes de trabajo propias, indexadas por `solicitud_id` (batch 20) —
+  // una solicitud 'aceptada' tiene detrás una orden con su propio estado
+  // (barra de progreso), su inspección de entrada (fotos/daños/PDF) y el
+  // PDF de salida una vez entregado. `ordenesPorSolicitudRef` es un espejo
+  // de solo lectura para el manejador de Realtime de abajo, que necesita
+  // el ÚLTIMO estado conocido sin depender de un closure obsoleto.
+  const [ordenesPorSolicitud, setOrdenesPorSolicitud] = useState<Record<string, OrdenCliente>>({});
+  const ordenesPorSolicitudRef = useRef<Record<string, OrdenCliente>>({});
+  useEffect(() => {
+    ordenesPorSolicitudRef.current = ordenesPorSolicitud;
+  }, [ordenesPorSolicitud]);
+
+  // Aviso visual (toast) cuando cambia el estado de una orden propia — ver
+  // el canal de Realtime más abajo. Se autodescarta solo a los pocos
+  // segundos.
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 7000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  // Consentimiento RGPD del formulario de nueva solicitud (batch 20).
+  const [rgpdAceptado, setRgpdAceptado] = useState(false);
+
   const cargar = useCallback(async () => {
     setCargando(true);
     setError(null);
-    const [solicitudesRes, presupuestosRes] = await Promise.all([
+    const [solicitudesRes, presupuestosRes, ordenesRes] = await Promise.all([
       supabase
         .from('solicitudes')
         .select(
@@ -127,6 +199,18 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
         .select(
           'id, orden_id, solicitud_id, concepto_mano_obra, precio_mano_obra, estado, nota_cliente, ' +
             'created_at, enviado_en, respondido_en, factura_pdf_url',
+        ),
+      // Órdenes propias (batch 20) — la RLS "Cliente ve su propia orden"
+      // (ver supabase/batch20_migration.sql) ya las limita a las que
+      // cuelgan de una solicitud propia; si esa migración todavía no está
+      // aplicada en este proyecto, esta consulta simplemente no devuelve
+      // ninguna fila (no falla), y la app sigue mostrando solo el estado
+      // de la solicitud, como hasta ahora.
+      supabase
+        .from('ordenes_trabajo')
+        .select(
+          'id, estado, solicitud_id, cita_recogida, pdf_salida_url, valoracion_estrellas, valoracion_comentario, ' +
+            'inspecciones_entrada(fotos_urls, daños_coordenadas, pdf_informe_url)',
         ),
     ]);
     if (solicitudesRes.error) setError(solicitudesRes.error.message);
@@ -156,12 +240,52 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
         setPiezasPorPresupuesto(mapaPiezas);
       }
     }
+
+    if (!ordenesRes.error) {
+      const mapaOrdenes: Record<string, OrdenCliente> = {};
+      for (const o of (ordenesRes.data ?? []) as unknown as OrdenCliente[]) {
+        if (o.solicitud_id) mapaOrdenes[o.solicitud_id] = o;
+      }
+      setOrdenesPorSolicitud(mapaOrdenes);
+    }
     setCargando(false);
   }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargar();
+  }, [cargar]);
+
+  // Aviso en tiempo real (batch 20) — Supabase Realtime respeta la RLS de
+  // cada tabla con el token de quien está conectado (igual que ya hace
+  // `useSolicitudesPendientes.ts` para el personal), así que este cliente
+  // solo recibe eventos de SUS propias filas: sus solicitudes (ya estaba
+  // en la publicación desde antes) y, desde el batch 20, sus propias
+  // órdenes. Comparar el estado nuevo contra `ordenesPorSolicitudRef` (en
+  // vez de `payload.old`) es a propósito: por defecto Postgres no incluye
+  // todas las columnas antiguas en el evento de UPDATE (solo la clave
+  // primaria), así que el único sitio fiable para saber "cuál era el
+  // estado anterior" es lo que la propia app ya tenía cargado.
+  useEffect(() => {
+    const canal = supabase
+      .channel('portal-cliente-tiempo-real')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes_trabajo' }, (payload) => {
+        const nueva = payload.new as { id: string; estado: EstadoOrden } | null;
+        if (nueva) {
+          const anterior = Object.values(ordenesPorSolicitudRef.current).find((o) => o.id === nueva.id);
+          if (anterior && anterior.estado !== nueva.estado) {
+            setToast(`Tu vehículo ha pasado a "${ETIQUETA_ESTADO_ORDEN[nueva.estado] ?? nueva.estado}".`);
+          }
+        }
+        cargar();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes' }, () => {
+        cargar();
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(canal);
+    };
   }, [cargar]);
 
   const responderPresupuesto = async (presupuesto: Presupuesto, estado: 'aprobado' | 'rechazado') => {
@@ -195,6 +319,10 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
       setError('La matrícula y el teléfono de contacto son obligatorios.');
       return;
     }
+    if (!rgpdAceptado) {
+      setError('Debes aceptar el tratamiento de tus datos para enviar la solicitud.');
+      return;
+    }
     setEnviando(true);
     const {
       data: { user },
@@ -218,6 +346,8 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
         descripcion: form.descripcion || null,
         neumaticos_cantidad: form.tipoServicio === 'neumaticos' ? form.neumaticosCantidad : null,
         fecha_cita_checkin: form.fechaCitaCheckin ? new Date(form.fechaCitaCheckin).toISOString() : null,
+        rgpd_aceptado: rgpdAceptado,
+        rgpd_aceptado_en: new Date().toISOString(),
       })
       .select()
       .single();
@@ -228,6 +358,7 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
     }
     setSolicitudes((prev) => [data as Solicitud, ...prev]);
     setForm(FORM_VACIO);
+    setRgpdAceptado(false);
     setFormAbierto(false);
   };
 
@@ -248,6 +379,20 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-blue-50">
+      {toast && (
+        <div className="fixed inset-x-4 top-3 z-50 mx-auto flex max-w-sm items-start gap-2 rounded-xl bg-gray-900 px-4 py-3 text-sm text-white shadow-lg sm:inset-x-auto sm:right-4">
+          <Bell className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+          <span className="flex-1">{toast}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="text-white/60 hover:text-white"
+            aria-label="Cerrar aviso"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
       <nav className="bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 shadow-md">
         <div className="mx-auto flex max-w-2xl items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white">
@@ -414,6 +559,20 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
               </p>
             </div>
 
+            <label className="flex items-start gap-2 rounded-lg bg-white px-3 py-2 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={rgpdAceptado}
+                onChange={(e) => setRgpdAceptado(e.target.checked)}
+                required
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300"
+              />
+              <span>
+                He leído y acepto que TallerGo trate mis datos de contacto y los de mi vehículo para
+                gestionar esta solicitud, conforme al RGPD. <span className="text-red-500">*</span>
+              </span>
+            </label>
+
             <button
               type="submit"
               disabled={enviando}
@@ -467,14 +626,33 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
                     </p>
                   )}
                   {s.fecha_cita_checkin && (
-                    <p className="flex items-center gap-1.5 text-xs text-gray-500">
-                      <CalendarClock className="h-3.5 w-3.5 shrink-0" />
-                      Propusiste traerlo el {new Date(s.fecha_cita_checkin).toLocaleDateString('es-ES')} a las{' '}
-                      {new Date(s.fecha_cita_checkin).toLocaleTimeString('es-ES', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </p>
+                    <div className="space-y-1">
+                      <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                        <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                        Propusiste traerlo el {new Date(s.fecha_cita_checkin).toLocaleDateString('es-ES')} a las{' '}
+                        {new Date(s.fecha_cita_checkin).toLocaleTimeString('es-ES', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          descargarIcs(
+                            {
+                              titulo: `Llevar vehículo al taller${s.matricula ? ` (${s.matricula})` : ''} — TallerGo`,
+                              descripcion: 'Cita propuesta para traer el vehículo al taller.',
+                              inicio: new Date(s.fecha_cita_checkin as string),
+                              duracionMinutos: 30,
+                            },
+                            `cita-checkin-${s.matricula ?? s.id}`,
+                          )
+                        }
+                        className="ml-5 flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        <CalendarPlus className="h-3 w-3" /> Añadir a mi calendario
+                      </button>
+                    </div>
                   )}
                   {s.telefono_cliente && (
                     <p className="flex items-center gap-1.5 text-xs text-gray-500">
@@ -500,12 +678,15 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
                       {cancelandoId === s.id ? 'Cancelando...' : 'Cancelar solicitud'}
                     </button>
                   )}
-                  {s.estado === 'aceptada' && (
-                    <p className="flex items-center gap-1.5 text-xs text-emerald-600">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Trae el vehículo cuando acordéis — el check-in
-                      se hace al llegar al taller.
-                    </p>
-                  )}
+                  {s.estado === 'aceptada' &&
+                    (ordenesPorSolicitud[s.id] ? (
+                      <SeguimientoOrdenCliente orden={ordenesPorSolicitud[s.id]} matricula={s.matricula} />
+                    ) : (
+                      <p className="flex items-center gap-1.5 text-xs text-emerald-600">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Trae el vehículo cuando acordéis — el
+                        check-in se hace al llegar al taller.
+                      </p>
+                    ))}
 
                   {presupuesto && (
                     <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
@@ -585,3 +766,265 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
     </div>
   );
 }
+
+/**
+ * Seguimiento visual de una orden propia ya aceptada (batch 20): barra de
+ * progreso, cita de recogida con botón .ics, informe de entrada (fotos +
+ * esquema de daños + PDF), PDF de entrega y, una vez entregado, el bloque
+ * de valoración — todo dentro de la propia tarjeta de la solicitud.
+ */
+function SeguimientoOrdenCliente({ orden, matricula }: { orden: OrdenCliente; matricula: string | null }) {
+  return (
+    <div className="space-y-3 rounded-lg border border-emerald-100 bg-emerald-50/40 p-3">
+      <BarraProgresoOrden estado={orden.estado} />
+
+      {orden.estado === 'listo' && orden.cita_recogida && (
+        <div className="space-y-1">
+          <p className="flex items-center gap-1.5 text-xs text-emerald-700">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+            Recogida concertada: {new Date(orden.cita_recogida).toLocaleDateString('es-ES')} a las{' '}
+            {new Date(orden.cita_recogida).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+          </p>
+          <button
+            type="button"
+            onClick={() =>
+              descargarIcs(
+                {
+                  titulo: `Recoger vehículo${matricula ? ` ${matricula}` : ''} — TallerGo`,
+                  descripcion: 'Cita para recoger el vehículo del taller.',
+                  inicio: new Date(orden.cita_recogida as string),
+                  duracionMinutos: 20,
+                },
+                `cita-recogida-${matricula ?? orden.id}`,
+              )
+            }
+            className="ml-5 flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
+          >
+            <CalendarPlus className="h-3 w-3" /> Añadir a mi calendario
+          </button>
+        </div>
+      )}
+
+      {orden.inspecciones_entrada && orden.inspecciones_entrada.length > 0 && (
+        <InformeEntradaCliente inspeccion={orden.inspecciones_entrada[0]} />
+      )}
+
+      {orden.pdf_salida_url && (
+        <a
+          href={orden.pdf_salida_url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:underline"
+        >
+          <FileCheck className="h-3.5 w-3.5" /> Ver informe de entrega (PDF)
+        </a>
+      )}
+
+      {orden.estado === 'entregado' && <ValoracionCliente orden={orden} />}
+    </div>
+  );
+}
+
+/** Barra de progreso tipo "seguimiento de pedido" — 5 pasos fijos (el
+ *  estado 'cancelado' se muestra aparte, no como un 6º paso). */
+function BarraProgresoOrden({ estado }: { estado: EstadoOrden }) {
+  const PASOS: { value: EstadoOrden; label: string }[] = [
+    { value: 'solicitado', label: 'Solicitado' },
+    { value: 'recepcionado', label: 'Recepcionado' },
+    { value: 'en_proceso', label: 'En proceso' },
+    { value: 'listo', label: 'Listo' },
+    { value: 'entregado', label: 'Entregado' },
+  ];
+
+  if (estado === 'cancelado') {
+    return (
+      <p className="flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
+        <X className="h-3.5 w-3.5" /> Esta orden se ha cancelado.
+      </p>
+    );
+  }
+
+  const indiceActual = Math.max(
+    0,
+    PASOS.findIndex((p) => p.value === estado),
+  );
+
+  return (
+    <div className="flex items-start">
+      {PASOS.map((paso, i) => {
+        const completado = i < indiceActual;
+        const actual = i === indiceActual;
+        return (
+          <div key={paso.value} className="flex flex-1 flex-col items-center last:flex-none last:items-end">
+            <div className="flex w-full items-center">
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                  completado || actual ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-400'
+                }`}
+              >
+                {completado ? <Check className="h-3 w-3" /> : i + 1}
+              </span>
+              {i < PASOS.length - 1 && (
+                <span className={`mx-1 h-0.5 flex-1 ${completado ? 'bg-emerald-500' : 'bg-gray-200'}`} />
+              )}
+            </div>
+            <span
+              className={`mt-1 text-center text-[10px] leading-tight ${
+                actual ? 'font-semibold text-emerald-700' : 'text-gray-400'
+              }`}
+            >
+              {paso.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Informe de entrada del cliente (batch 20): miniaturas de las fotos +
+ *  esquema de daños rasterizado (reutiliza `renderDamageSchemaImage`, la
+ *  misma función que ya genera esta imagen para el PDF — así el cliente ve
+ *  exactamente el mismo dibujo) + enlace al PDF completo. No repite el
+ *  editor interactivo de daños (CarDamagePicker) — es de solo lectura. */
+function InformeEntradaCliente({ inspeccion }: { inspeccion: InspeccionCliente }) {
+  const [imagenDanos, setImagenDanos] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    if (inspeccion.daños_coordenadas && inspeccion.daños_coordenadas.length > 0) {
+      renderDamageSchemaImage(inspeccion.daños_coordenadas).then((url) => {
+        if (!cancelado) setImagenDanos(url);
+      });
+    }
+    return () => {
+      cancelado = true;
+    };
+  }, [inspeccion.daños_coordenadas]);
+
+  const hayFotos = !!inspeccion.fotos_urls && inspeccion.fotos_urls.length > 0;
+  if (!hayFotos && !imagenDanos && !inspeccion.pdf_informe_url) return null;
+
+  return (
+    <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50/60 p-3">
+      <p className="flex items-center gap-1.5 text-xs font-semibold text-sky-800">
+        <ClipboardList className="h-3.5 w-3.5" /> Informe de entrada
+      </p>
+      {hayFotos && (
+        <div className="flex gap-1.5 overflow-x-auto">
+          {(inspeccion.fotos_urls ?? []).slice(0, 6).map((url) => (
+            <img
+              key={url}
+              src={url}
+              alt=""
+              className="h-14 w-14 shrink-0 rounded-lg border border-white object-cover"
+            />
+          ))}
+        </div>
+      )}
+      {imagenDanos && (
+        <img
+          src={imagenDanos}
+          alt="Esquema de daños marcados"
+          className="w-full rounded-lg border border-white"
+        />
+      )}
+      {inspeccion.pdf_informe_url && (
+        <a
+          href={inspeccion.pdf_informe_url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-block text-xs font-medium text-sky-700 hover:underline"
+        >
+          Ver informe de entrada completo (PDF)
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** Valoración rápida (1-5 estrellas + comentario opcional) que el cliente
+ *  deja una vez la orden está 'entregado' — batch 20. Solo se puede enviar
+ *  una vez (ver política + trigger `bloquear_cambio_cliente_orden` en
+ *  supabase/batch20_migration.sql), así que en cuanto se envía queda fija
+ *  en modo lectura, sin volver a pedirla. */
+function ValoracionCliente({ orden }: { orden: OrdenCliente }) {
+  const [enviada, setEnviada] = useState<{ estrellas: number; comentario: string | null } | null>(
+    orden.valoracion_estrellas
+      ? { estrellas: orden.valoracion_estrellas, comentario: orden.valoracion_comentario }
+      : null,
+  );
+  const [estrellas, setEstrellas] = useState(0);
+  const [comentario, setComentario] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (enviada) {
+    return (
+      <div className="rounded-lg bg-yellow-50 px-3 py-2">
+        <p className="mb-1 text-xs font-semibold text-yellow-800">Tu valoración</p>
+        <div className="flex gap-0.5">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <Star
+              key={n}
+              className={`h-4 w-4 ${n <= enviada.estrellas ? 'fill-yellow-400 text-yellow-400' : 'text-yellow-200'}`}
+            />
+          ))}
+        </div>
+        {enviada.comentario && <p className="mt-1 text-xs text-yellow-700">{enviada.comentario}</p>}
+      </div>
+    );
+  }
+
+  const enviar = async () => {
+    if (estrellas < 1) {
+      setError('Elige al menos 1 estrella.');
+      return;
+    }
+    setEnviando(true);
+    setError(null);
+    const { error: updateError } = await supabase
+      .from('ordenes_trabajo')
+      .update({
+        valoracion_estrellas: estrellas,
+        valoracion_comentario: comentario.trim() || null,
+        valoracion_en: new Date().toISOString(),
+      })
+      .eq('id', orden.id);
+    setEnviando(false);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setEnviada({ estrellas, comentario: comentario.trim() || null });
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-yellow-200 bg-yellow-50/60 p-3">
+      <p className="text-xs font-semibold text-yellow-800">¿Qué tal la experiencia? Valora el servicio</p>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <div className="flex gap-1">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} type="button" onClick={() => setEstrellas(n)} aria-label={`${n} estrellas`}>
+            <Star className={`h-6 w-6 ${n <= estrellas ? 'fill-yellow-400 text-yellow-400' : 'text-yellow-300'}`} />
+          </button>
+        ))}
+      </div>
+      <input
+        value={comentario}
+        onChange={(e) => setComentario(e.target.value)}
+        placeholder="Comentario opcional..."
+        className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-xs"
+      />
+      <button
+        type="button"
+        onClick={enviar}
+        disabled={enviando}
+        className="rounded-lg bg-yellow-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600 disabled:opacity-60"
+      >
+        {enviando ? 'Enviando...' : 'Enviar valoración'}
+      </button>
+    </div>
+  );
+}
+
