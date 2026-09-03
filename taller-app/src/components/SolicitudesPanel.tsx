@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Car, CalendarClock, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, Save, XCircle } from 'lucide-react';
+import {
+  Car,
+  CalendarClock,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  Mail,
+  MessageSquareText,
+  Phone,
+  Save,
+  XCircle,
+} from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { EstadoSolicitud, NeumaticosCantidad, Solicitud, TipoServicio } from '../lib/types';
 
@@ -200,6 +212,15 @@ export default function SolicitudesPanel() {
   const pendientes = solicitudes.filter((s) => s.estado === 'pendiente');
   const resueltas = solicitudes.filter((s) => s.estado !== 'pendiente');
 
+  // "Ya revisadas" puede acumular muchísimas con el tiempo (o con datos de
+  // prueba) y llenar la pantalla — se muestran solo las más recientes por
+  // defecto (ya vienen ordenadas por fecha de creación descendente, ver
+  // `cargar()`), con un botón para desplegar el resto sin perder acceso a
+  // ellas.
+  const LIMITE_RESUELTAS_INICIAL = 6;
+  const [verTodasResueltas, setVerTodasResueltas] = useState(false);
+  const resueltasMostradas = verTodasResueltas ? resueltas : resueltas.slice(0, LIMITE_RESUELTAS_INICIAL);
+
   if (cargando) {
     return (
       <p className="flex items-center gap-2 text-sm text-gray-500">
@@ -280,9 +301,14 @@ export default function SolicitudesPanel() {
 
           {resueltas.length > 0 && (
             <section>
-              <h2 className="mb-3 text-sm font-semibold text-gray-700">Ya revisadas</h2>
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                Ya revisadas
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                  {resueltas.length}
+                </span>
+              </h2>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {resueltas.map((s) => (
+                {resueltasMostradas.map((s) => (
                   <div key={s.id} className="space-y-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <TarjetaCabecera s={s} />
                     {s.respuesta_taller && (
@@ -321,6 +347,23 @@ export default function SolicitudesPanel() {
                   </div>
                 ))}
               </div>
+              {resueltas.length > LIMITE_RESUELTAS_INICIAL && (
+                <button
+                  type="button"
+                  onClick={() => setVerTodasResueltas((v) => !v)}
+                  className="mt-3 flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50"
+                >
+                  {verTodasResueltas ? (
+                    <>
+                      <ChevronUp className="h-3.5 w-3.5" /> Ver menos
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-3.5 w-3.5" /> Ver todas ({resueltas.length})
+                    </>
+                  )}
+                </button>
+              )}
             </section>
           )}
         </>

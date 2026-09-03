@@ -1244,3 +1244,15 @@ consultaba (las citas de la Agenda).
   visitas de ese vehículo. Ningún dato nuevo que guardar: todo sale del
   kilometraje que ya se registraba en cada check-in
   (`inspecciones_entrada.kilometraje`, ver `InspectionForm.tsx`).
+- **Corrección tras las primeras pruebas**: el ritmo real de kilometraje
+  exigía que la primera y la última lectura estuvieran separadas por al
+  menos 1 día para fiarse del cálculo; eso descartaba en silencio casos
+  reales como dos visitas el mismo día con un salto grande de kilometraje
+  (p. ej. un vehículo de flota). Ahora el umbral es de solo 1 hora — lo
+  justo para evitar un ritmo "infinito" si dos lecturas quedaran casi
+  simultáneas, sin excluir visitas del mismo día.
+- **"Ya revisadas" del Panel de solicitudes limitado a las últimas 6**
+  (`SolicitudesPanel.tsx`), con un botón "Ver todas (N)" para desplegar el
+  resto — antes se listaban TODAS sin límite, y con muchas solicitudes ya
+  respondidas (o datos de prueba) la pantalla se llenaba sin necesidad,
+  cuando lo habitual es solo querer ver las últimas.
