@@ -21,7 +21,12 @@ create table if not exists vehiculos (
   marca text,
   modelo text,
   color text,        -- para distinguir el vehículo de un vistazo en el panel
-  cliente_id uuid references clientes(id) on delete cascade
+  cliente_id uuid references clientes(id) on delete cascade,
+  -- Coche o moto (batch 24) — determina qué listas de sugerencia de
+  -- marca/modelo y qué opciones de neumáticos se muestran en el Check-in,
+  -- y qué icono se usa en las listas. Por defecto 'coche' para no romper
+  -- ningún vehículo ya existente al añadir esta columna.
+  tipo_vehiculo text not null default 'coche' check (tipo_vehiculo in ('coche', 'moto'))
 );
 
 -- 3. TABLA DE ÓRDENES DE TRABAJO
@@ -311,7 +316,12 @@ create table if not exists solicitudes (
   descripcion text,
   neumaticos_cantidad text,
   estado text not null default 'pendiente' check (estado in ('pendiente', 'aceptada', 'rechazada', 'cancelada')),
-  respuesta_taller text
+  respuesta_taller text,
+  -- Coche o moto (batch 24) — se captura ya en la propia solicitud (antes
+  -- de que exista una fila en `vehiculos`) para poder mostrar el
+  -- formulario/datalist correcto desde el principio. Igual que en
+  -- `vehiculos`, por defecto 'coche'.
+  tipo_vehiculo text not null default 'coche' check (tipo_vehiculo in ('coche', 'moto'))
 );
 
 -- Notificaciones en tiempo real: el Panel de gestión avisa al instante
@@ -342,9 +352,21 @@ create table if not exists coches_repuesto (
   notas text,
   baja boolean not null default false,
   -- Precio por hora de uso (opcional) — null = no se cobra el préstamo.
-  precio_hora numeric(10,2)
+  precio_hora numeric(10,2),
+  -- Coche o moto (batch 24) — el nombre de la tabla/columnas se queda
+  -- como está (coches_repuesto, coche_repuesto_id en ordenes_trabajo) para
+  -- no renombrar media base de datos por esto; en la UI ya se habla de
+  -- "vehículo de sustitución" en general.
+  tipo_vehiculo text not null default 'coche' check (tipo_vehiculo in ('coche', 'moto'))
 );
 alter table coches_repuesto add column if not exists precio_hora numeric(10,2);
+alter table coches_repuesto add column if not exists tipo_vehiculo text not null default 'coche';
+do $$
+begin
+  alter table coches_repuesto add constraint coches_repuesto_tipo_vehiculo_check check (tipo_vehiculo in ('coche', 'moto'));
+exception when duplicate_object then
+  null;
+end $$;
 
 -- 9b. CONFIGURACIÓN DEL TALLER (fila única, id fijo = 1) — batch 19, parte
 -- 4. De momento solo guarda cuántas citas caben a la vez en la misma
@@ -404,6 +426,17 @@ alter table vehiculos add column if not exists combustible text;
 alter table vehiculos add column if not exists anio integer;
 alter table vehiculos add column if not exists motor text;
 alter table vehiculos add column if not exists aviso_anual_aceptado boolean not null default false;
+
+-- Batch 24: coche o moto (ver también solicitudes y coches_repuesto más
+-- abajo) — mismo motivo, para que una instalación nueva quede igual que
+-- una ya migrada con batch24_migration.sql.
+alter table vehiculos add column if not exists tipo_vehiculo text not null default 'coche';
+do $$
+begin
+  alter table vehiculos add constraint vehiculos_tipo_vehiculo_check check (tipo_vehiculo in ('coche', 'moto'));
+exception when duplicate_object then
+  null;
+end $$;
 
 -- 10. PRECIOS DE INVENTARIO — tabla APARTE de inventario_items a propósito:
 -- así un mecánico, que SÍ puede leer inventario_items para elegir piezas
@@ -465,6 +498,15 @@ create table if not exists presupuesto_piezas (
 -- cliente al pedir el servicio desde el Portal — con la misma sencillez
 -- que la cita de RECOGIDA que ya existía (ordenes_trabajo.cita_recogida).
 alter table solicitudes add column if not exists fecha_cita_checkin timestamp with time zone;
+
+-- Batch 24: coche o moto, capturado ya en la propia solicitud.
+alter table solicitudes add column if not exists tipo_vehiculo text not null default 'coche';
+do $$
+begin
+  alter table solicitudes add constraint solicitudes_tipo_vehiculo_check check (tipo_vehiculo in ('coche', 'moto'));
+exception when duplicate_object then
+  null;
+end $$;
 
 -- =============================================================
 -- Row Level Security

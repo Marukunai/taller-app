@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Ban, Car, CheckCircle2, Link2, Loader2, Pencil, Plus, RotateCcw, Truck, X } from 'lucide-react';
+import { Ban, Bike, Car, CheckCircle2, Link2, Loader2, Pencil, Plus, RotateCcw, Truck, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import EnlazarOrdenModal from '../components/EnlazarOrdenModal';
-import type { CocheRepuesto } from '../lib/types';
+import type { CocheRepuesto, TipoVehiculo } from '../lib/types';
+import { fabricantesPara, modelosParaFabricante } from '../lib/vehicleData';
 
 interface NuevoCocheForm {
   matricula: string;
+  tipoVehiculo: TipoVehiculo;
   marca: string;
   modelo: string;
   notas: string;
@@ -15,6 +17,7 @@ interface NuevoCocheForm {
 
 const FORM_VACIO: NuevoCocheForm = {
   matricula: '',
+  tipoVehiculo: 'coche',
   marca: '',
   modelo: '',
   notas: '',
@@ -65,7 +68,7 @@ export default function FlotaRepuestoPanel() {
     setError(null);
     const { data: flota, error: flotaError } = await supabase
       .from('coches_repuesto')
-      .select('id, matricula, marca, modelo, notas, baja, precio_hora')
+      .select('id, matricula, tipo_vehiculo, marca, modelo, notas, baja, precio_hora')
       .order('matricula', { ascending: true });
     if (flotaError) {
       setError(flotaError.message);
@@ -125,6 +128,7 @@ export default function FlotaRepuestoPanel() {
       .from('coches_repuesto')
       .insert({
         matricula: form.matricula.trim(),
+        tipo_vehiculo: form.tipoVehiculo,
         marca: form.marca.trim() || null,
         modelo: form.modelo.trim() || null,
         notas: form.notas.trim() || null,
@@ -146,6 +150,7 @@ export default function FlotaRepuestoPanel() {
     setCocheEditando(coche.id);
     setFormEdicion({
       matricula: coche.matricula,
+      tipoVehiculo: coche.tipo_vehiculo,
       marca: coche.marca ?? '',
       modelo: coche.modelo ?? '',
       notas: coche.notas ?? '',
@@ -165,6 +170,7 @@ export default function FlotaRepuestoPanel() {
       .from('coches_repuesto')
       .update({
         matricula: formEdicion.matricula.trim(),
+        tipo_vehiculo: formEdicion.tipoVehiculo,
         marca: formEdicion.marca.trim() || null,
         modelo: formEdicion.modelo.trim() || null,
         notas: formEdicion.notas.trim() || null,
@@ -217,9 +223,44 @@ export default function FlotaRepuestoPanel() {
             </button>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de vehículo</label>
+              <div className="flex w-fit rounded-xl border border-gray-300 bg-white p-0.5 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setFormEdicion((p) => ({ ...p, tipoVehiculo: 'coche' }))}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                    formEdicion.tipoVehiculo === 'coche' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <Car className="h-3.5 w-3.5" /> Coche
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormEdicion((p) => ({ ...p, tipoVehiculo: 'moto' }))}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                    formEdicion.tipoVehiculo === 'moto' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <Bike className="h-3.5 w-3.5" /> Moto
+                </button>
+              </div>
+            </div>
             <Campo label="Matrícula" value={formEdicion.matricula} onChange={(v) => setFormEdicion((p) => ({ ...p, matricula: v }))} required />
-            <Campo label="Marca" value={formEdicion.marca} onChange={(v) => setFormEdicion((p) => ({ ...p, marca: v }))} />
-            <Campo label="Modelo" value={formEdicion.modelo} onChange={(v) => setFormEdicion((p) => ({ ...p, modelo: v }))} />
+            <Campo
+              label="Marca"
+              value={formEdicion.marca}
+              onChange={(v) => setFormEdicion((p) => ({ ...p, marca: v }))}
+              listId="lista-fabricantes-flota-edicion"
+              listOptions={fabricantesPara(formEdicion.tipoVehiculo)}
+            />
+            <Campo
+              label="Modelo"
+              value={formEdicion.modelo}
+              onChange={(v) => setFormEdicion((p) => ({ ...p, modelo: v }))}
+              listId="lista-modelos-flota-edicion"
+              listOptions={modelosParaFabricante(formEdicion.marca, formEdicion.tipoVehiculo)}
+            />
             <Campo label="Notas" value={formEdicion.notas} onChange={(v) => setFormEdicion((p) => ({ ...p, notas: v }))} />
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Precio por hora (€, opcional)</label>
@@ -257,7 +298,7 @@ export default function FlotaRepuestoPanel() {
             coche.baja ? 'bg-gray-100 text-gray-400' : prestamo ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'
           }`}
         >
-          <Car className="h-5 w-5" />
+          {coche.tipo_vehiculo === 'moto' ? <Bike className="h-5 w-5" /> : <Car className="h-5 w-5" />}
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-medium text-gray-900">{coche.matricula}</p>
@@ -368,9 +409,44 @@ export default function FlotaRepuestoPanel() {
             </button>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de vehículo</label>
+              <div className="flex w-fit rounded-xl border border-gray-300 bg-white p-0.5 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setForm((p) => ({ ...p, tipoVehiculo: 'coche' }))}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                    form.tipoVehiculo === 'coche' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <Car className="h-3.5 w-3.5" /> Coche
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm((p) => ({ ...p, tipoVehiculo: 'moto' }))}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                    form.tipoVehiculo === 'moto' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <Bike className="h-3.5 w-3.5" /> Moto
+                </button>
+              </div>
+            </div>
             <Campo label="Matrícula" value={form.matricula} onChange={(v) => setForm((p) => ({ ...p, matricula: v }))} required />
-            <Campo label="Marca" value={form.marca} onChange={(v) => setForm((p) => ({ ...p, marca: v }))} />
-            <Campo label="Modelo" value={form.modelo} onChange={(v) => setForm((p) => ({ ...p, modelo: v }))} />
+            <Campo
+              label="Marca"
+              value={form.marca}
+              onChange={(v) => setForm((p) => ({ ...p, marca: v }))}
+              listId="lista-fabricantes-flota"
+              listOptions={fabricantesPara(form.tipoVehiculo)}
+            />
+            <Campo
+              label="Modelo"
+              value={form.modelo}
+              onChange={(v) => setForm((p) => ({ ...p, modelo: v }))}
+              listId="lista-modelos-flota"
+              listOptions={modelosParaFabricante(form.marca, form.tipoVehiculo)}
+            />
             <Campo label="Notas (opcional)" value={form.notas} onChange={(v) => setForm((p) => ({ ...p, notas: v }))} />
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Precio por hora (€, opcional)</label>
@@ -451,9 +527,11 @@ interface CampoProps {
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
+  listId?: string;
+  listOptions?: string[];
 }
 
-function Campo({ label, value, onChange, required }: CampoProps) {
+function Campo({ label, value, onChange, required, listId, listOptions }: CampoProps) {
   return (
     <div>
       <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -464,8 +542,16 @@ function Campo({ label, value, onChange, required }: CampoProps) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
+        list={listId}
         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
       />
+      {listId && listOptions && (
+        <datalist id={listId}>
+          {listOptions.map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      )}
     </div>
   );
 }

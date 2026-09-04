@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Car, ClipboardList, ExternalLink, Gauge, Loader2, Search, TrendingUp } from 'lucide-react';
+import { Bike, Car, ClipboardList, ExternalLink, Gauge, Loader2, Search, TrendingUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import type { EstadoOrden, TipoServicio } from '../lib/types';
+import type { EstadoOrden, TipoServicio, TipoVehiculo } from '../lib/types';
 
 interface OrdenHistorial {
   id: string;
@@ -19,6 +19,7 @@ interface OrdenHistorial {
 interface VehiculoEncontrado {
   id: string;
   matricula: string;
+  tipo_vehiculo: TipoVehiculo;
   marca: string | null;
   modelo: string | null;
   color: string | null;
@@ -90,7 +91,7 @@ export default function HistorialVehiculo({ matriculaInicial }: HistorialVehicul
 
     const { data: vehiculos, error: vehError } = await supabase
       .from('vehiculos')
-      .select('id, matricula, marca, modelo, color, clientes(nombre, telefono, email)')
+      .select('id, matricula, tipo_vehiculo, marca, modelo, color, clientes(nombre, telefono, email)')
       .ilike('matricula', `%${q}%`)
       .limit(1);
 
@@ -200,7 +201,12 @@ export default function HistorialVehiculo({ matriculaInicial }: HistorialVehicul
         <div className="space-y-6">
           <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
             <div className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-              <Car className="h-4 w-4 text-gray-400" /> {vehiculo.matricula}
+              {vehiculo.tipo_vehiculo === 'moto' ? (
+                <Bike className="h-4 w-4 text-gray-400" />
+              ) : (
+                <Car className="h-4 w-4 text-gray-400" />
+              )}{' '}
+              {vehiculo.matricula}
             </div>
             <p className="text-sm text-gray-500">
               {[vehiculo.marca, vehiculo.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo'}

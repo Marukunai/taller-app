@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
+  Bike,
   Calendar,
   CalendarClock,
   CalendarDays,
@@ -17,7 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import type { TipoServicio } from '../lib/types';
+import type { TipoServicio, TipoVehiculo } from '../lib/types';
 
 type TipoCita = 'checkin' | 'recogida';
 
@@ -27,6 +28,7 @@ interface EventoAgenda {
   fecha: string;
   tipoServicio: TipoServicio | null;
   matricula: string | null;
+  tipoVehiculo: TipoVehiculo | null;
   marcaModelo: string;
   clienteNombre: string;
   clienteTelefono: string | null;
@@ -303,14 +305,14 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
       supabase
         .from('ordenes_trabajo')
         .select(
-          'id, cita_recogida, tipo_servicio, vehiculos(matricula, marca, modelo, clientes(nombre, telefono))',
+          'id, cita_recogida, tipo_servicio, vehiculos(matricula, tipo_vehiculo, marca, modelo, clientes(nombre, telefono))',
         )
         .not('cita_recogida', 'is', null)
         .eq('estado', 'listo'),
       supabase
         .from('solicitudes')
         .select(
-          'id, fecha_cita_checkin, tipo_servicio, matricula, marca, modelo, nombre_cliente, telefono_cliente',
+          'id, fecha_cita_checkin, tipo_servicio, matricula, tipo_vehiculo, marca, modelo, nombre_cliente, telefono_cliente',
         )
         .not('fecha_cita_checkin', 'is', null)
         .in('estado', ['pendiente', 'aceptada']),
@@ -334,6 +336,7 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
         tipo_servicio: TipoServicio | null;
         vehiculos: {
           matricula: string;
+          tipo_vehiculo: TipoVehiculo;
           marca: string | null;
           modelo: string | null;
           clientes: { nombre: string; telefono: string } | null;
@@ -345,6 +348,7 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
         fecha: orden.cita_recogida,
         tipoServicio: orden.tipo_servicio,
         matricula: orden.vehiculos?.matricula ?? null,
+        tipoVehiculo: orden.vehiculos?.tipo_vehiculo ?? null,
         marcaModelo: [orden.vehiculos?.marca, orden.vehiculos?.modelo].filter(Boolean).join(' '),
         clienteNombre: orden.vehiculos?.clientes?.nombre ?? 'Cliente',
         clienteTelefono: orden.vehiculos?.clientes?.telefono ?? null,
@@ -357,6 +361,7 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
         fecha_cita_checkin: string;
         tipo_servicio: TipoServicio | null;
         matricula: string | null;
+        tipo_vehiculo: TipoVehiculo | null;
         marca: string | null;
         modelo: string | null;
         nombre_cliente: string;
@@ -368,6 +373,7 @@ export default function AgendaPanel({ esEncargado }: { esEncargado: boolean }) {
         fecha: sol.fecha_cita_checkin,
         tipoServicio: sol.tipo_servicio,
         matricula: sol.matricula,
+        tipoVehiculo: sol.tipo_vehiculo,
         marcaModelo: [sol.marca, sol.modelo].filter(Boolean).join(' '),
         clienteNombre: sol.nombre_cliente,
         clienteTelefono: sol.telefono_cliente,
@@ -864,7 +870,11 @@ function TarjetaEvento({ evento }: { evento: EventoAgenda }) {
           · {evento.tipo === 'checkin' ? 'Traída (check-in)' : 'Recogida'}
         </p>
         <p className="flex items-center gap-1.5 truncate text-xs text-gray-600">
-          <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          {evento.tipoVehiculo === 'moto' ? (
+            <Bike className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          ) : (
+            <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          )}
           {evento.matricula ?? '—'} · {evento.marcaModelo || 'Sin marca/modelo'}
         </p>
         <p className="truncate text-xs text-gray-500">{evento.clienteNombre}</p>

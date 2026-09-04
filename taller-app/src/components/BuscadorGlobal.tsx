@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Car, Loader2, Search, User, X } from 'lucide-react';
+import { Bike, Car, Loader2, Search, User, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { TipoVehiculo } from '../lib/types';
 
 interface ResultadoBusqueda {
   matricula: string;
   descripcion: string;
+  tipoVehiculo: TipoVehiculo;
 }
 
 interface BuscadorGlobalProps {
@@ -40,12 +42,12 @@ export default function BuscadorGlobal({ onSeleccionar }: BuscadorGlobalProps) {
       const [vehiculosRes, clientesRes] = await Promise.all([
         supabase
           .from('vehiculos')
-          .select('matricula, marca, modelo, clientes(nombre)')
+          .select('matricula, tipo_vehiculo, marca, modelo, clientes(nombre)')
           .ilike('matricula', `%${texto}%`)
           .limit(5),
         supabase
           .from('clientes')
-          .select('nombre, dni, vehiculos(matricula, marca, modelo)')
+          .select('nombre, dni, vehiculos(matricula, tipo_vehiculo, marca, modelo)')
           .or(`nombre.ilike.%${texto}%,dni.ilike.%${texto}%`)
           .limit(5),
       ]);
@@ -54,12 +56,14 @@ export default function BuscadorGlobal({ onSeleccionar }: BuscadorGlobalProps) {
       const deVehiculos: ResultadoBusqueda[] = (vehiculosRes.data ?? []).map((v) => {
         const veh = v as unknown as {
           matricula: string;
+          tipo_vehiculo: TipoVehiculo;
           marca: string | null;
           modelo: string | null;
           clientes: { nombre: string } | null;
         };
         return {
           matricula: veh.matricula,
+          tipoVehiculo: veh.tipo_vehiculo,
           descripcion: `${[veh.marca, veh.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo'} · ${
             veh.clientes?.nombre ?? 'Sin cliente'
           }`,
@@ -69,10 +73,11 @@ export default function BuscadorGlobal({ onSeleccionar }: BuscadorGlobalProps) {
       const deClientes: ResultadoBusqueda[] = (clientesRes.data ?? []).flatMap((c) => {
         const cli = c as unknown as {
           nombre: string;
-          vehiculos: { matricula: string; marca: string | null; modelo: string | null }[] | null;
+          vehiculos: { matricula: string; tipo_vehiculo: TipoVehiculo; marca: string | null; modelo: string | null }[] | null;
         };
         return (cli.vehiculos ?? []).map((v) => ({
           matricula: v.matricula,
+          tipoVehiculo: v.tipo_vehiculo,
           descripcion: `${[v.marca, v.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo'} · ${cli.nombre}`,
         }));
       });
@@ -156,7 +161,11 @@ export default function BuscadorGlobal({ onSeleccionar }: BuscadorGlobalProps) {
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-gray-50"
               >
                 {r.matricula.length > 3 && /\d/.test(r.matricula) ? (
-                  <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                  r.tipoVehiculo === 'moto' ? (
+                    <Bike className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                  ) : (
+                    <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                  )
                 ) : (
                   <User className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                 )}

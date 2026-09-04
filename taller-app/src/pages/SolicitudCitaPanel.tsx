@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { CalendarClock, ChevronDown, ChevronUp, Loader2, Plus } from 'lucide-react';
+import { Bike, Car, CalendarClock, ChevronDown, ChevronUp, Loader2, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import SolicitudesPanel from '../components/SolicitudesPanel';
-import { FABRICANTES, modelosParaFabricante } from '../lib/vehicleData';
-import type { NeumaticosCantidad, TipoServicio } from '../lib/types';
+import { fabricantesPara, modelosParaFabricante } from '../lib/vehicleData';
+import type { NeumaticosCantidad, TipoServicio, TipoVehiculo } from '../lib/types';
 
 const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
   { value: 'mantenimiento', label: 'Mantenimiento' },
@@ -23,11 +23,18 @@ const OPCIONES_NEUMATICOS: { value: NeumaticosCantidad; label: string }[] = [
   { value: 'trasero_derecho', label: 'Uno: trasero derecho' },
 ];
 
+/** Para moto (batch 24): solo 2 ruedas, sin distinción izquierda/derecha. */
+const OPCIONES_NEUMATICOS_MOTO: { value: NeumaticosCantidad; label: string }[] = [
+  { value: 'delantero', label: 'Delantero' },
+  { value: 'trasero', label: 'Trasero' },
+];
+
 const FORM_VACIO = {
   nombre: '',
   telefono: '',
   email: '',
   matricula: '',
+  tipoVehiculo: 'coche' as TipoVehiculo,
   marca: '',
   modelo: '',
   tipoServicio: 'mantenimiento' as TipoServicio,
@@ -91,6 +98,7 @@ export default function SolicitudCitaPanel() {
       email_cliente: form.email.trim() || null,
       telefono_cliente: form.telefono.trim(),
       matricula: form.matricula.trim() || null,
+      tipo_vehiculo: form.tipoVehiculo,
       marca: form.marca.trim() || null,
       modelo: form.modelo.trim() || null,
       tipo_servicio: form.tipoServicio,
@@ -165,6 +173,29 @@ export default function SolicitudCitaPanel() {
                 onChange={(v) => setForm((p) => ({ ...p, email: v }))}
                 type="email"
               />
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de vehículo</label>
+                <div className="flex w-fit rounded-xl border border-gray-300 bg-white p-0.5 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, tipoVehiculo: 'coche', neumaticosCantidad: 'las_4' }))}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                      form.tipoVehiculo === 'coche' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Car className="h-3.5 w-3.5" /> Coche
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, tipoVehiculo: 'moto', neumaticosCantidad: 'delantero' }))}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                      form.tipoVehiculo === 'moto' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Bike className="h-3.5 w-3.5" /> Moto
+                  </button>
+                </div>
+              </div>
               <Campo
                 label="Matrícula (si se conoce)"
                 value={form.matricula}
@@ -175,14 +206,14 @@ export default function SolicitudCitaPanel() {
                 value={form.marca}
                 onChange={(v) => setForm((p) => ({ ...p, marca: v }))}
                 listId="lista-fabricantes-cita"
-                listOptions={FABRICANTES}
+                listOptions={fabricantesPara(form.tipoVehiculo)}
               />
               <Campo
                 label="Modelo"
                 value={form.modelo}
                 onChange={(v) => setForm((p) => ({ ...p, modelo: v }))}
                 listId="lista-modelos-cita"
-                listOptions={modelosParaFabricante(form.marca)}
+                listOptions={modelosParaFabricante(form.marca, form.tipoVehiculo)}
               />
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de servicio</label>
@@ -236,7 +267,7 @@ export default function SolicitudCitaPanel() {
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm sm:w-64"
                 >
-                  {OPCIONES_NEUMATICOS.map((o) => (
+                  {(form.tipoVehiculo === 'moto' ? OPCIONES_NEUMATICOS_MOTO : OPCIONES_NEUMATICOS).map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Car, CalendarClock, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, Save, XCircle } from 'lucide-react';
+import { Bike, Car, CalendarClock, CheckCircle2, Loader2, Mail, MessageSquareText, Phone, Save, XCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { EstadoSolicitud, NeumaticosCantidad, Solicitud, TipoServicio } from '../lib/types';
 
@@ -55,6 +55,9 @@ const ETIQUETAS_NEUMATICOS: Record<NeumaticosCantidad, string> = {
   delantero_derecho: 'Uno: delantero derecho',
   trasero_izquierdo: 'Uno: trasero izquierdo',
   trasero_derecho: 'Uno: trasero derecho',
+  // Moto (batch 24): solo 2 ruedas, sin distinción izquierda/derecha.
+  delantero: 'Delantero',
+  trasero: 'Trasero',
 };
 
 const ESTADO_BADGE: Record<EstadoSolicitud, { label: string; clase: string }> = {
@@ -97,7 +100,7 @@ export default function SolicitudesPanel() {
       .from('solicitudes')
       .select(
         'id, created_at, cliente_auth_id, nombre_cliente, email_cliente, telefono_cliente, ' +
-          'matricula, marca, modelo, tipo_servicio, descripcion, neumaticos_cantidad, estado, respuesta_taller, ' +
+          'matricula, tipo_vehiculo, marca, modelo, tipo_servicio, descripcion, neumaticos_cantidad, estado, respuesta_taller, ' +
           'fecha_cita_checkin',
       )
       .order('created_at', { ascending: false });
@@ -431,7 +434,11 @@ function TarjetaCabecera({ s }: { s: Solicitud }) {
       </div>
       {s.matricula && (
         <p className="flex items-center gap-1.5 text-xs text-gray-600">
-          <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          {s.tipo_vehiculo === 'moto' ? (
+            <Bike className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          ) : (
+            <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          )}
           {s.matricula} · {[s.marca, s.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo'}
         </p>
       )}

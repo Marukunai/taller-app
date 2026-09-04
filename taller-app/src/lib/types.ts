@@ -28,6 +28,11 @@ export type NivelCombustible = '1/4' | '1/2' | '3/4' | 'Lleno';
 
 export type TipoServicio = 'mantenimiento' | 'neumaticos' | 'averia' | 'pre_itv';
 
+/** Coche o moto (batch 24) — determina qué listas de marca/modelo y
+ *  neumáticos se ofrecen, y qué icono se usa. Por defecto 'coche' en toda
+ *  la base de datos existente (ver migración). */
+export type TipoVehiculo = 'coche' | 'moto';
+
 export type EstadoOrden =
   | 'solicitado'
   | 'recepcionado'
@@ -37,7 +42,11 @@ export type EstadoOrden =
   | 'cancelado';
 
 /** Qué neumáticos concretos se van a tocar cuando el servicio es de tipo
- *  'neumaticos' — o bien un eje completo, los 4, o una rueda concreta. */
+ *  'neumaticos' — para coche, o bien un eje completo, los 4, o una rueda
+ *  concreta; para moto (batch 24), solo hay delantero/trasero (2 ruedas,
+ *  sin distinción izquierda/derecha). Mismo campo de texto en la base de
+ *  datos para los dos tipos de vehículo — ver `OPCIONES_NEUMATICOS_MOTO`
+ *  en cada formulario para la lista reducida que se ofrece con una moto. */
 export type NeumaticosCantidad =
   | '2_delanteros'
   | '2_traseros'
@@ -45,7 +54,9 @@ export type NeumaticosCantidad =
   | 'delantero_izquierdo'
   | 'delantero_derecho'
   | 'trasero_izquierdo'
-  | 'trasero_derecho';
+  | 'trasero_derecho'
+  | 'delantero'
+  | 'trasero';
 
 export interface Cliente {
   id: string;
@@ -80,6 +91,8 @@ export interface Vehiculo {
   // "Próximas revisiones" pueda destacar qué vehículos lo han aceptado.
   aviso_anual_aceptado: boolean;
   cliente_id: string;
+  // Coche o moto (batch 24) — ver TipoVehiculo.
+  tipo_vehiculo: TipoVehiculo;
 }
 
 export interface OrdenTrabajo {
@@ -231,8 +244,12 @@ export interface CocheRepuesto {
   notas: string | null;
   baja: boolean;
   // Precio por hora de uso (opcional) — para poder cobrar el préstamo del
-  // coche de sustitución si el taller así lo decide. Null = no se cobra.
+  // vehículo de sustitución si el taller así lo decide. Null = no se cobra.
   precio_hora: number | null;
+  // Coche o moto (batch 24) — la tabla/nombre de la interfaz se quedan
+  // igual (ver nota en schema.sql), pero ya puede ser una moto de
+  // sustitución. Ver TipoVehiculo.
+  tipo_vehiculo: TipoVehiculo;
 }
 
 /** Rol de una cuenta de Supabase Auth — jerarquía desde el batch 19:
@@ -290,6 +307,7 @@ export interface OrdenPendienteRecepcion {
   telefono: string;
   email: string;
   matricula: string;
+  tipoVehiculo: TipoVehiculo;
   marca: string;
   modelo: string;
   tipoServicio: TipoServicio;
@@ -341,6 +359,8 @@ export interface Solicitud {
   // personal desde "Solicitud de cita" — no aplica, no hay checkbox ahí).
   rgpd_aceptado: boolean;
   rgpd_aceptado_en: string | null;
+  // Coche o moto (batch 24) — ver TipoVehiculo.
+  tipo_vehiculo: TipoVehiculo;
 }
 
 /** Precio de un item de inventario — en tabla APARTE de `InventarioItem` a

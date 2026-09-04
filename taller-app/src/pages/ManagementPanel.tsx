@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowRight,
+  Bike,
   Car,
   CheckCircle2,
   Euro,
@@ -22,7 +23,7 @@ import CitaRecogidaModal from '../components/CitaRecogidaModal';
 import CancelarOrdenModal from '../components/CancelarOrdenModal';
 import AsignarRepuestoModal from '../components/AsignarRepuestoModal';
 import PresupuestoModal from '../components/PresupuestoModal';
-import type { EstadoOrden, EstadoPresupuesto, OrdenPendienteRecepcion, TipoServicio } from '../lib/types';
+import type { EstadoOrden, EstadoPresupuesto, OrdenPendienteRecepcion, TipoServicio, TipoVehiculo } from '../lib/types';
 
 /** Estados en los que el vehículo ya está físicamente en el taller — solo
  *  en estos tiene sentido ofrecer/gestionar un coche de sustitución. */
@@ -88,6 +89,7 @@ interface OrdenPanel {
     marca: string | null;
     modelo: string | null;
     color: string | null;
+    tipo_vehiculo: TipoVehiculo;
     clientes: { nombre: string; telefono: string; email: string | null } | null;
   } | null;
   inspecciones_entrada: { fotos_urls: string[] | null }[] | null;
@@ -103,6 +105,7 @@ interface OrdenPanel {
     matricula: string | null;
     marca: string | null;
     modelo: string | null;
+    tipo_vehiculo: TipoVehiculo;
   } | null;
   coche_repuesto_id: string | null;
   fecha_devolucion_repuesto: string | null;
@@ -143,9 +146,9 @@ function primeraFoto(orden: OrdenPanel): string | null {
 
 const SELECT_ORDENES =
   'id, estado, tipo_servicio, descripcion_averia, fecha_entrada, fecha_entrega, cita_recogida, motivo_cancelacion, ' +
-  'vehiculos(matricula, marca, modelo, color, clientes(nombre, telefono, email)), ' +
+  'vehiculos(matricula, marca, modelo, color, tipo_vehiculo, clientes(nombre, telefono, email)), ' +
   'inspecciones_entrada(fotos_urls), piezas_usadas(id), ' +
-  'solicitudes(nombre_cliente, telefono_cliente, email_cliente, matricula, marca, modelo), ' +
+  'solicitudes(nombre_cliente, telefono_cliente, email_cliente, matricula, marca, modelo, tipo_vehiculo), ' +
   'coche_repuesto_id, fecha_devolucion_repuesto, fecha_devolucion_repuesto_prevista, ' +
   'coches_repuesto(matricula, marca, modelo), solicitud_id, ' +
   'mecanico_asignado_id, valoracion_estrellas, valoracion_comentario';
@@ -301,6 +304,7 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
       telefono: s?.telefono_cliente ?? '',
       email: s?.email_cliente ?? '',
       matricula: s?.matricula ?? '',
+      tipoVehiculo: s?.tipo_vehiculo ?? 'coche',
       marca: s?.marca ?? '',
       modelo: s?.modelo ?? '',
       tipoServicio: orden.tipo_servicio,
@@ -532,7 +536,11 @@ export default function ManagementPanel({ onEntregar, onRecibirDesdeSolicitud, e
                               )}
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5 text-base font-semibold text-gray-900">
-                                  <Car className="h-4 w-4 shrink-0 text-gray-400" />
+                                  {(orden.vehiculos?.tipo_vehiculo ?? orden.solicitudes?.tipo_vehiculo) === 'moto' ? (
+                                    <Bike className="h-4 w-4 shrink-0 text-gray-400" />
+                                  ) : (
+                                    <Car className="h-4 w-4 shrink-0 text-gray-400" />
+                                  )}
                                   <span className="truncate">{matricula ?? '—'}</span>
                                 </div>
                                 <p className="truncate text-sm text-gray-500">

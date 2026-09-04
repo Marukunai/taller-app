@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   Bell,
+  Bike,
   Calendar,
   CalendarClock,
   CalendarPlus,
@@ -24,7 +25,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { FABRICANTES, modelosParaFabricante } from '../lib/vehicleData';
+import { fabricantesPara, modelosParaFabricante } from '../lib/vehicleData';
 import { renderDamageSchemaImage } from '../lib/renderDamageSchema';
 import { descargarIcs } from '../lib/ics';
 import type {
@@ -36,6 +37,7 @@ import type {
   PresupuestoPieza,
   Solicitud,
   TipoServicio,
+  TipoVehiculo,
 } from '../lib/types';
 
 const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
@@ -55,6 +57,11 @@ const OPCIONES_NEUMATICOS: { value: NeumaticosCantidad; label: string }[] = [
   { value: 'trasero_derecho', label: 'Uno: trasero derecho' },
 ];
 
+const OPCIONES_NEUMATICOS_MOTO: { value: NeumaticosCantidad; label: string }[] = [
+  { value: 'delantero', label: 'Delantero' },
+  { value: 'trasero', label: 'Trasero' },
+];
+
 const ESTADO_BADGE: Record<EstadoSolicitud, { label: string; clase: string }> = {
   pendiente: { label: 'Pendiente de revisión', clase: 'bg-amber-100 text-amber-700' },
   aceptada: { label: 'Aceptada por el taller', clase: 'bg-emerald-100 text-emerald-700' },
@@ -69,6 +76,7 @@ interface ClientPortalProps {
 
 const FORM_VACIO = {
   matricula: '',
+  tipoVehiculo: 'coche' as TipoVehiculo,
   marca: '',
   modelo: '',
   telefono: '',
@@ -190,7 +198,7 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
         .from('solicitudes')
         .select(
           'id, created_at, cliente_auth_id, nombre_cliente, email_cliente, telefono_cliente, ' +
-            'matricula, marca, modelo, tipo_servicio, descripcion, neumaticos_cantidad, estado, ' +
+            'matricula, tipo_vehiculo, marca, modelo, tipo_servicio, descripcion, neumaticos_cantidad, estado, ' +
             'respuesta_taller, fecha_cita_checkin',
         )
         .order('created_at', { ascending: false }),
@@ -340,6 +348,7 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
         email_cliente: emailUsuario,
         telefono_cliente: form.telefono || null,
         matricula: form.matricula || null,
+        tipo_vehiculo: form.tipoVehiculo,
         marca: form.marca || null,
         modelo: form.modelo || null,
         tipo_servicio: form.tipoServicio,
@@ -448,6 +457,29 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de vehículo</label>
+                <div className="flex w-fit rounded-xl border border-gray-300 bg-white p-0.5 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, tipoVehiculo: 'coche', neumaticosCantidad: 'las_4' }))}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                      form.tipoVehiculo === 'coche' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Car className="h-3.5 w-3.5" /> Coche
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, tipoVehiculo: 'moto', neumaticosCantidad: 'delantero' }))}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                      form.tipoVehiculo === 'moto' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Bike className="h-3.5 w-3.5" /> Moto
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Matrícula <span className="text-red-500">*</span>
@@ -480,7 +512,7 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
                 <datalist id="lista-fabricantes-portal">
-                  {FABRICANTES.map((f) => (
+                  {fabricantesPara(form.tipoVehiculo).map((f) => (
                     <option key={f} value={f} />
                   ))}
                 </datalist>
@@ -494,7 +526,7 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
                 <datalist id="lista-modelos-portal">
-                  {modelosParaFabricante(form.marca).map((m) => (
+                  {modelosParaFabricante(form.marca, form.tipoVehiculo).map((m) => (
                     <option key={m} value={m} />
                   ))}
                 </datalist>
@@ -523,7 +555,7 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
                     }
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   >
-                    {OPCIONES_NEUMATICOS.map((o) => (
+                    {(form.tipoVehiculo === 'moto' ? OPCIONES_NEUMATICOS_MOTO : OPCIONES_NEUMATICOS).map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -621,7 +653,11 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
                   </div>
                   {s.matricula && (
                     <p className="flex items-center gap-1.5 text-xs text-gray-600">
-                      <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                      {s.tipo_vehiculo === 'moto' ? (
+                        <Bike className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                      ) : (
+                        <Car className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                      )}
                       {s.matricula} · {[s.marca, s.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo'}
                     </p>
                   )}

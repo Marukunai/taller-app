@@ -1263,3 +1263,69 @@ consultaba (las citas de la Agenda).
   cómo encajar motos (matrículas con otro formato, tipos de servicio/
   piezas distintos, quizá campos de inspección diferentes) en todo el
   flujo: check-in, inventario, presupuestos, etc.
+
+## 36. Batch 24: soporte para motos (fase 1)
+
+Requiere ejecutar `supabase/batch24_migration.sql` (añade la columna
+`tipo_vehiculo` a `vehiculos`, `solicitudes` y `coches_repuesto`; segura
+de re-ejecutar más de una vez).
+
+Hasta este batch la app solo contemplaba coches. Tras hablarlo con el
+usuario (motos son un tipo de vehículo real y con volumen casi
+equiparable al de coches en su taller), se añade un tipo de vehículo
+**coche / moto** de punta a punta, con una decisión de alcance explícita:
+el **diagrama visual de daños para moto queda pospuesto a una fase 2**
+(es, con diferencia, la pieza más costosa — un dibujo propio + calibrar
+zonas pulsables); de momento, para moto, los daños se documentan con foto
++ nota de texto (que el usuario confirmó que vale por ahora).
+
+- **Selector Coche/Moto** en los 3 formularios donde se da de alta un
+  vehículo — `InspectionForm.tsx` (check-in en el taller),
+  `SolicitudCitaPanel.tsx` (solicitud de cita por teléfono, la crea el
+  personal) y `ClientPortal.tsx` (el cliente pide cita él mismo) — con
+  un interruptor con icono de coche/moto que determina:
+  - Qué lista de marcas/modelos se sugiere al escribir (ver más abajo).
+  - Las opciones de "¿cuántos neumáticos?": para moto son solo
+    **Delantero** / **Trasero** (no aplican las 7 opciones de coche
+    con izquierda/derecha).
+  - Si aparece el diagrama visual de daños (`CarDamagePicker`, solo para
+    coche) o un aviso de que, para moto, los daños se documentan con
+    fotos y notas.
+- **Vehículo de sustitución también para motos** (`FlotaRepuestoPanel.tsx`,
+  "moto de repuesto"): el mismo selector Coche/Moto al añadir o editar un
+  vehículo de la flota de sustitución, con marca/modelo también
+  sugeridos según el tipo. La tabla sigue llamándose `coches_repuesto`
+  (igual que `coche_repuesto_id` en `ordenes_trabajo`) para no renombrar
+  media base de datos por esto — en la UI ya se habla de "vehículo de
+  sustitución" en general.
+- **Icono distinto para moto** en todas las listas y fichas donde se
+  identifica un vehículo concreto: `ManagementPanel.tsx` (tablero),
+  `AgendaPanel.tsx` (citas), `HistorialVehiculo.tsx`,
+  `ProximasRevisiones.tsx`, `BuscadorGlobal.tsx` (buscador de la barra de
+  navegación) y `SolicitudesPanel.tsx`/`ClientPortal.tsx` (solicitudes).
+- **Marcas y modelos de moto** (`src/lib/vehicleData.ts`): lista propia de
+  ~28 fabricantes habituales en España (Honda, Yamaha, Suzuki, Kawasaki,
+  Ducati, BMW, KTM, Triumph, Piaggio/Vespa, Aprilia, Royal Enfield,
+  Harley-Davidson, Moto Guzzi, Husqvarna, Kymco, SYM, Benelli, MV Agusta,
+  etc.) con sus modelos más vendidos, igual de "autocompletado de texto
+  libre" que la lista de coches — no bloquea escribir algo distinto.
+- **Umbral de "toca revisión" propio para moto** en Próximas revisiones
+  (`ProximasRevisiones.tsx`): el criterio de tiempo se mantiene igual
+  (12 meses para ambos), pero el de kilometraje pasa de 15.000 a
+  **6.000 km/año** para moto — el kilometraje medio real de un motorista
+  en España, según el estudio de ANESDOR recogido por
+  [coches.net](https://www.coches.net/blog-profesionales/mas-de-23-km-diarios-y-6-000-km-al-ano-trayecto-medio-de-los-conductores-de-moto/)
+  ("más de 23 km diarios y 6.000 km al año, trayecto medio de los
+  conductores de moto"). Usar el mismo umbral que coche habría dejado el
+  aviso prácticamente inútil para motos (casi ninguna llegaría nunca a
+  15.000 km/año). El mismo criterio (ritmo real del vehículo cuando hay
+  ≥2 lecturas, si no el genérico) se aplica igual, solo cambia el valor
+  genérico y el umbral según `tipo_vehiculo`.
+- **Sin cambios**: los tipos de servicio (Mantenimiento / Neumáticos /
+  Avería / Pre ITV) sirven igual para moto según confirmó el usuario, así
+  que se dejan tal cual. El formato de matrícula tampoco cambia (en
+  España es el mismo para coche y moto).
+- **Pendiente (fase 2, no bloquea este batch)**: diagrama visual de daños
+  para moto (silueta propia + zonas calibradas, análogo a
+  `car-schema.svg`/`carSchemaZones.ts`) — de momento se usa foto + nota
+  de texto como sustituto, ya confirmado como válido por el usuario.

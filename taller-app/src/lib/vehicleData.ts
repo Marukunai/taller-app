@@ -181,12 +181,122 @@ const MODELOS_POR_FABRICANTE: Record<string, string[]> = {
   xpeng: ['G6', 'G9', 'P7'],
 };
 
+/** Fabricantes de MOTO habituales en un taller español (batch 24) —
+ *  motos "de carretera" convencionales (naked, scooter, trail, custom...),
+ *  incluye marcas japonesas generalistas, europeas premium, marcas de
+ *  scooter, y algunas históricas/españolas que siguen mucho en circulación
+ *  (Derbi, Rieju) — no pretende ser exhaustiva, mismo criterio que
+ *  `FABRICANTES` de coche. */
+export const FABRICANTES_MOTO: string[] = [
+  'Aprilia',
+  'Benelli',
+  'Beta',
+  'BMW',
+  'CFMoto',
+  'Derbi',
+  'Ducati',
+  'GasGas',
+  'Harley-Davidson',
+  'Honda',
+  'Husqvarna',
+  'Indian',
+  'Kawasaki',
+  'KTM',
+  'Kymco',
+  'Moto Guzzi',
+  'MV Agusta',
+  'Peugeot Motocycles',
+  'Piaggio',
+  'Rieju',
+  'Royal Enfield',
+  'Sherco',
+  'Suzuki',
+  'SYM',
+  'Triumph',
+  'Vespa',
+  'Yamaha',
+  'Zontes',
+];
+
+/** Modelos habituales por fabricante de MOTO — mismo criterio y misma
+ *  función (`modelosParaFabricante`, ahora con el tipo de vehículo) que
+ *  para coche. */
+const MODELOS_POR_FABRICANTE_MOTO: Record<string, string[]> = {
+  aprilia: ['RS 660', 'Tuono 660', 'RSV4', 'SR GT', 'Tuareg 660', 'RS 125', 'Tuono 125'],
+  benelli: ['Leoncino 500', 'TRK 502', 'TRK 502 X', 'Imperiale 400', '752 S', 'BN 302'],
+  beta: ['RR 250', 'RR 300', 'Xtrainer', 'Alp 200'],
+  bmw: [
+    'R 1250 GS', 'R 1250 GS Adventure', 'F 900 R', 'F 900 XR', 'F 850 GS', 'S 1000 RR', 'S 1000 R',
+    'R nineT', 'G 310 R', 'G 310 GS', 'C 400 X', 'C 400 GT', 'CE 04',
+  ],
+  cfmoto: ['300SR', '450SR', '650MT', '700CL-X', '800MT', '800NK'],
+  derbi: ['Senda', 'GPR 125', 'Terra', 'Boulevard'],
+  ducati: [
+    'Monster', 'Panigale V2', 'Panigale V4', 'Multistrada V2', 'Multistrada V4', 'Scrambler Icon',
+    'Diavel', 'Hypermotard 950', 'DesertX',
+  ],
+  gasgas: ['EC 250', 'EC 300', 'MC 450F', 'Enduro GP'],
+  'harley-davidson': [
+    'Iron 883', 'Forty-Eight', 'Street Bob', 'Fat Boy', 'Road King', 'Sportster S', 'Pan America',
+    'Low Rider S',
+  ],
+  honda: [
+    'CB125R', 'CB500F', 'CB650R', 'CBR500R', 'CBR600RR', 'CB1000R', 'Africa Twin', 'Transalp',
+    'PCX125', 'SH125i', 'SH350i', 'Forza 125', 'Forza 350', 'Monkey', 'CRF300L',
+  ],
+  husqvarna: ['Svartpilen 125', 'Svartpilen 401', 'Vitpilen 401', 'Norden 901', 'FE 350'],
+  indian: ['Scout', 'Scout Bobber', 'Chief', 'Springfield', 'Chieftain'],
+  kawasaki: [
+    'Ninja 400', 'Ninja 650', 'Ninja ZX-10R', 'Z650', 'Z900', 'Z400', 'Versys 650', 'Versys 1000',
+    'Vulcan S', 'W800',
+  ],
+  ktm: [
+    'Duke 125', 'Duke 390', 'Duke 790', 'Duke 890', 'Adventure 390', 'Adventure 790',
+    'Adventure 890', 'Adventure 1290', 'RC 125', 'RC 390',
+  ],
+  kymco: ['Agility 125', 'People 125', 'People 300', 'AK 550', 'Xciting 400', 'DTX 360'],
+  'moto guzzi': ['V7', 'V9', 'V85 TT', 'California', 'Mandello'],
+  'mv agusta': ['Brutale', 'F3', 'Turismo Veloce', 'Superveloce'],
+  'peugeot motocycles': ['Django', 'Speedfight', 'Kisbee', 'Tweet', 'Metropolis'],
+  piaggio: ['Liberty', 'MP3', 'Beverly', 'Medley'],
+  rieju: ['MRT', 'Marathon', 'MRX', 'Century'],
+  'royal enfield': [
+    'Meteor 350', 'Classic 350', 'Hunter 350', 'Himalayan', 'Interceptor 650', 'Continental GT 650',
+    'Scram 411',
+  ],
+  sherco: ['SE 300', 'SEF 450', 'Factory'],
+  suzuki: [
+    'GSX-R600', 'GSX-R750', 'GSX-R1000', 'GSX-S750', 'GSX-S1000', 'SV650', 'V-Strom 650',
+    'V-Strom 1050', 'Burgman 125', 'Burgman 400',
+  ],
+  sym: ['Symphony', 'Jet 14', 'NH-T', 'Cruisym'],
+  triumph: [
+    'Street Triple', 'Speed Triple', 'Tiger 900', 'Tiger 1200', 'Bonneville T100', 'Bonneville T120',
+    'Trident 660', 'Scrambler 900',
+  ],
+  vespa: ['Primavera', 'Sprint', 'GTS 125', 'GTS 300', 'LX'],
+  yamaha: [
+    'MT-07', 'MT-09', 'MT-125', 'YZF-R125', 'YZF-R7', 'YZF-R1', 'Tracer 7', 'Tracer 9',
+    'Ténéré 700', 'XMAX 125', 'XMAX 300', 'NMAX 125', 'Tricity 125',
+  ],
+  zontes: ['ZT125', 'ZT310', 'ZT350', 'GK350'],
+};
+
+/** Fabricantes de coche o de moto según `tipoVehiculo` — la lista a pasar
+ *  al `<datalist>` de "Marca" del formulario que corresponda. */
+export function fabricantesPara(tipoVehiculo: 'coche' | 'moto'): string[] {
+  return tipoVehiculo === 'moto' ? FABRICANTES_MOTO : FABRICANTES;
+}
+
 /** Devuelve las sugerencias de modelo para el fabricante ya escrito (si lo
  *  reconoce) o una lista vacía — nunca lanza ni bloquea, es solo para
- *  rellenar el `<datalist>` del campo "Modelo". */
-export function modelosParaFabricante(fabricante: string): string[] {
+ *  rellenar el `<datalist>` del campo "Modelo". `tipoVehiculo` (batch 24,
+ *  por defecto 'coche' para no romper las llamadas ya existentes) elige
+ *  entre la lista de modelos de coche o de moto. */
+export function modelosParaFabricante(fabricante: string, tipoVehiculo: 'coche' | 'moto' = 'coche'): string[] {
   const clave = fabricante.trim().toLowerCase();
-  return MODELOS_POR_FABRICANTE[clave] ?? [];
+  const mapa = tipoVehiculo === 'moto' ? MODELOS_POR_FABRICANTE_MOTO : MODELOS_POR_FABRICANTE;
+  return mapa[clave] ?? [];
 }
 
 /** Tipos de combustible habituales. */

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
+  Bike,
   Camera,
+  Car,
   CheckCircle2,
   ClipboardCheck,
   ExternalLink,
@@ -21,7 +23,7 @@ import { buildWhatsAppLink } from '../lib/whatsapp';
 import {
   aniosVehiculo,
   COMBUSTIBLES,
-  FABRICANTES,
+  fabricantesPara,
   modelosParaFabricante,
   NEUMATICO_ANCHOS,
   NEUMATICO_ESTACIONES,
@@ -37,6 +39,7 @@ import type {
   NivelCombustible,
   OrdenPendienteRecepcion,
   TipoServicio,
+  TipoVehiculo,
 } from '../lib/types';
 
 const ANIOS_VEHICULO = aniosVehiculo();
@@ -57,6 +60,12 @@ const OPCIONES_NEUMATICOS: { value: NeumaticosCantidad; label: string }[] = [
   { value: 'delantero_derecho', label: 'Uno: delantero derecho' },
   { value: 'trasero_izquierdo', label: 'Uno: trasero izquierdo' },
   { value: 'trasero_derecho', label: 'Uno: trasero derecho' },
+];
+
+/** Para moto (batch 24): solo 2 ruedas, sin distinción izquierda/derecha. */
+const OPCIONES_NEUMATICOS_MOTO: { value: NeumaticosCantidad; label: string }[] = [
+  { value: 'delantero', label: 'Delantero' },
+  { value: 'trasero', label: 'Trasero' },
 ];
 
 interface FotoPendiente {
@@ -88,6 +97,11 @@ export default function InspectionForm({
   const [telefono, setTelefono] = useState('');
   const [email, setEmail] = useState('');
   const [matricula, setMatricula] = useState('');
+  // Coche o moto (batch 24) — decide qué datalist de marca/modelo y qué
+  // opciones de neumáticos se ofrecen, y si se muestra el diagrama de
+  // daños (de momento solo hecho para coche; en moto se usan las fotos +
+  // observaciones de más abajo, que ya existían para los dos tipos).
+  const [tipoVehiculo, setTipoVehiculo] = useState<TipoVehiculo>('coche');
   const [marca, setMarca] = useState('');
   const [modelo, setModelo] = useState('');
   const [color, setColor] = useState('');
@@ -148,6 +162,7 @@ export default function InspectionForm({
     setTelefono(ordenPendiente.telefono);
     setEmail(ordenPendiente.email);
     setMatricula(ordenPendiente.matricula);
+    setTipoVehiculo(ordenPendiente.tipoVehiculo);
     setMarca(ordenPendiente.marca);
     setModelo(ordenPendiente.modelo);
     setTipoServicio(ordenPendiente.tipoServicio);
@@ -290,6 +305,7 @@ export default function InspectionForm({
             anio: anio.trim() ? Number(anio) : null,
             motor: motor || null,
             cliente_id: cliente.id,
+            tipo_vehiculo: tipoVehiculo,
           },
           { onConflict: 'matricula' },
         )
@@ -498,6 +514,35 @@ export default function InspectionForm({
         </Seccion>
 
         <Seccion titulo="Vehículo y servicio" icono={<Wrench className="h-4 w-4" />} color="violet">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de vehículo</label>
+            <div className="flex w-fit rounded-xl border border-gray-300 bg-white p-0.5 shadow-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setTipoVehiculo('coche');
+                  setNeumaticosCantidad('las_4');
+                }}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  tipoVehiculo === 'coche' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                <Car className="h-3.5 w-3.5" /> Coche
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTipoVehiculo('moto');
+                  setNeumaticosCantidad('delantero');
+                }}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  tipoVehiculo === 'moto' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                <Bike className="h-3.5 w-3.5" /> Moto
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Campo label="Matrícula" value={matricula} onChange={setMatricula} required />
             <Campo
@@ -506,7 +551,7 @@ export default function InspectionForm({
               onChange={setMarca}
               required
               listId="lista-fabricantes"
-              listOptions={FABRICANTES}
+              listOptions={fabricantesPara(tipoVehiculo)}
             />
             <Campo
               label="Modelo"
@@ -514,7 +559,7 @@ export default function InspectionForm({
               onChange={setModelo}
               required
               listId="lista-modelos"
-              listOptions={modelosParaFabricante(marca)}
+              listOptions={modelosParaFabricante(marca, tipoVehiculo)}
             />
             <Campo label="Color" value={color} onChange={setColor} placeholder="Ej. Rojo, Gris plata" />
             <Campo
@@ -579,7 +624,7 @@ export default function InspectionForm({
                   onChange={(e) => setNeumaticosCantidad(e.target.value as NeumaticosCantidad)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 >
-                  {OPCIONES_NEUMATICOS.map((o) => (
+                  {(tipoVehiculo === 'moto' ? OPCIONES_NEUMATICOS_MOTO : OPCIONES_NEUMATICOS).map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
@@ -804,12 +849,19 @@ export default function InspectionForm({
             />
           </div>
 
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              Daños en la carrocería
-            </label>
-            <CarDamagePicker value={danos} onChange={setDanos} />
-          </div>
+          {tipoVehiculo === 'coche' ? (
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Daños en la carrocería
+              </label>
+              <CarDamagePicker value={danos} onChange={setDanos} />
+            </div>
+          ) : (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              Para motos, de momento no hay diagrama visual — usa las fotos y las notas de arriba
+              para dejar constancia de cualquier daño (p. ej. "raya en el depósito, lado derecho").
+            </p>
+          )}
         </Seccion>
 
         <Seccion titulo="Firma del cliente" icono={<PenLine className="h-4 w-4" />} color="emerald">
