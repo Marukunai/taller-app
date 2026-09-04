@@ -1325,7 +1325,58 @@ zonas pulsables); de momento, para moto, los daños se documentan con foto
   Avería / Pre ITV) sirven igual para moto según confirmó el usuario, así
   que se dejan tal cual. El formato de matrícula tampoco cambia (en
   España es el mismo para coche y moto).
-- **Pendiente (fase 2, no bloquea este batch)**: diagrama visual de daños
-  para moto (silueta propia + zonas calibradas, análogo a
-  `car-schema.svg`/`carSchemaZones.ts`) — de momento se usa foto + nota
-  de texto como sustituto, ya confirmado como válido por el usuario.
+- **Fase 2 completada** (ver punto 37 más abajo): diagrama visual de
+  daños para moto ya implementado, análogo al de coche.
+
+## 37. Batch 24: soporte para motos (fase 2 — diagrama visual de daños)
+
+Completa lo pospuesto en la fase 1: `MotoDamagePicker.tsx`, el
+equivalente a `CarDamagePicker.tsx` pero para moto, ya activo en el
+formulario de inspección de entrada.
+
+- **`public/moto-schema.svg`**: blueprint técnico de moto en 4 vistas
+  (lateral izquierdo, lateral derecho, frontal, trasera) en una sola
+  imagen combinada — provisto por el propio usuario (no generado por
+  Claude), para mantener la misma calidad visual que `car-schema.svg`.
+  Sin metadatos de licencia/autoría embebidos en el archivo.
+- **`src/lib/motoSchemaZones.ts`**: mismo enfoque que
+  `carSchemaZones.ts` — un solo punto de clic literal (sin proyección
+  entre vistas), con una posición "canónica" de 3 ejes (longitudinal /
+  lateral / altura, 0-100) calculada aparte solo para el texto del
+  informe ("parte delantera, lado derecho"...). Diferencias respecto al
+  esquema de coche:
+  - 4 vistas en vez de 5 (sin vista cenital) y sin selector "¿qué lado
+    del coche es?", porque el blueprint de moto ya trae las dos vistas
+    laterales reales en vez de una sola espejada.
+  - Las bandas de detección de vista (qué mitad de la imagen es cada
+    vista) y las tablas de calibración `PERFIL_*`/`EJE_FIJO` se
+    obtuvieron igual que en coche: renderizando el SVG a alta
+    resolución y midiendo el contorno real de la silueta con
+    Python/PIL (percentiles 3-97 por columna/fila para no distorsionar
+    la medida con detalles finos como espejos o el caballete).
+  - Identificación de lateral izquierdo vs. derecho por una pista
+    mecánica real (no arbitraria): el lado con cadena+piñón visible y
+    sin escape en la rueda trasera es el izquierdo; el lado con disco
+    de freno + escape visible es el derecho.
+- **`src/components/MotoDamagePicker.tsx`**: mismo componente que
+  `CarDamagePicker.tsx` (marcadores de color por tipo de daño, lista
+  editable con tipo + observación) apuntando a `moto-schema.svg` y a
+  `motoSchemaZones.ts`, con `aspect-[1536/898]` en vez de `aspect-[3/2]`
+  para respetar la proporción nativa del blueprint (necesario para que
+  el porcentaje de clic corresponda con el píxel real de la imagen).
+- **`InspectionForm.tsx`**: alterna entre `CarDamagePicker` y
+  `MotoDamagePicker` según `tipoVehiculo`. Al cambiar de tipo de
+  vehículo (coche ↔ moto) se limpian los daños ya marcados (`setDanos([])`),
+  porque las coordenadas son relativas al dibujo de cada tipo y no
+  tendría sentido conservarlas al cambiar de esquema.
+- **`renderDamageSchema.ts`**: generaba el PNG del esquema (para el PDF
+  y la vista del cliente) con el lienzo y la imagen de coche fijos.
+  Ahora usa una tabla `CANVAS_POR_TIPO` con el `src`/ancho/alto correcto
+  según `tipoVehiculo` (900×526 para moto, conservando la proporción
+  1536:898 del blueprint, frente a 900×600 para coche). El parámetro
+  `tipoVehiculo` se propaga desde `generateReportPdf.ts` (PDF del
+  informe) y desde `ClientPortal.tsx` (vista de seguimiento del
+  cliente).
+- **`InspectionReportPdf.tsx`** no necesitó cambios: `describirPosicion`
+  ya operaba solo sobre los 3 ejes canónicos precalculados, iguales para
+  ambos tipos de vehículo.

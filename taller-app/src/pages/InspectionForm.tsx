@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { supabase, BUCKETS } from '../lib/supabase';
 import CarDamagePicker from '../components/CarDamagePicker';
+import MotoDamagePicker from '../components/MotoDamagePicker';
 import SignatureModal from '../components/SignatureModal';
 import { generarYSubirInformePdf } from '../lib/generateReportPdf';
 import { buildWhatsAppLink } from '../lib/whatsapp';
@@ -432,6 +433,7 @@ export default function InspectionForm({
           matricula,
           cliente: { nombre, dni, telefono, email },
           vehiculo: { matricula, marca, modelo },
+          tipoVehiculo,
           tipoServicio,
           descripcionAveria,
           kilometraje: Number(kilometraje),
@@ -522,6 +524,11 @@ export default function InspectionForm({
                 onClick={() => {
                   setTipoVehiculo('coche');
                   setNeumaticosCantidad('las_4');
+                  // Los daños marcados usan coordenadas relativas al dibujo
+                  // (car-schema.svg vs moto-schema.svg tienen layouts
+                  // distintos) — al cambiar de tipo, los puntos ya
+                  // marcados quedarían fuera de sitio, así que se limpian.
+                  setDanos([]);
                 }}
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                   tipoVehiculo === 'coche' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:bg-gray-50'
@@ -534,6 +541,7 @@ export default function InspectionForm({
                 onClick={() => {
                   setTipoVehiculo('moto');
                   setNeumaticosCantidad('delantero');
+                  setDanos([]);
                 }}
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                   tipoVehiculo === 'moto' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:bg-gray-50'
@@ -849,19 +857,16 @@ export default function InspectionForm({
             />
           </div>
 
-          {tipoVehiculo === 'coche' ? (
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                Daños en la carrocería
-              </label>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              Daños en la carrocería
+            </label>
+            {tipoVehiculo === 'coche' ? (
               <CarDamagePicker value={danos} onChange={setDanos} />
-            </div>
-          ) : (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              Para motos, de momento no hay diagrama visual — usa las fotos y las notas de arriba
-              para dejar constancia de cualquier daño (p. ej. "raya en el depósito, lado derecho").
-            </p>
-          )}
+            ) : (
+              <MotoDamagePicker value={danos} onChange={setDanos} />
+            )}
+          </div>
         </Seccion>
 
         <Seccion titulo="Firma del cliente" icono={<PenLine className="h-4 w-4" />} color="emerald">

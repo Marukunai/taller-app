@@ -1,4 +1,4 @@
-import type { DanoMarcador, TipoDano } from './types';
+import type { DanoMarcador, TipoDano, TipoVehiculo } from './types';
 
 const COLOR_POR_TIPO: Record<TipoDano, string> = {
   arañazo: '#f59e0b',
@@ -6,14 +6,16 @@ const COLOR_POR_TIPO: Record<TipoDano, string> = {
   rotura: '#8b5cf6',
 };
 
-// Mismo aspect ratio 3:2 que usa el contenedor de CarDamagePicker y que
-// coincide con el viewBox real de /car-schema.svg (1536x1024) — SIN
-// padding, para que la imagen llene el canvas exactamente igual que llena
-// el contenedor real (ver historial de CarDamagePicker.tsx: un padding que
-// no coincidiera con esta proporción desalinearía la imagen respecto a las
-// coordenadas de los marcadores).
-const CANVAS_WIDTH = 900;
-const CANVAS_HEIGHT = 600;
+// Mismo aspect ratio que usa cada picker y que coincide con el viewBox
+// real de su SVG — SIN padding, para que la imagen llene el canvas
+// exactamente igual que llena el contenedor real (ver historial de
+// CarDamagePicker.tsx: un padding que no coincidiera con esta proporción
+// desalinearía la imagen respecto a las coordenadas de los marcadores).
+// car-schema.svg es 1536x1024 (3:2); moto-schema.svg es 1536x898.
+const CANVAS_POR_TIPO: Record<TipoVehiculo, { src: string; width: number; height: number }> = {
+  coche: { src: '/car-schema.svg', width: 900, height: 600 },
+  moto: { src: '/moto-schema.svg', width: 900, height: 526 },
+};
 const MARKER_RADIUS = 10;
 
 /**
@@ -26,15 +28,19 @@ const MARKER_RADIUS = 10;
  * Devuelve null si algo falla (p. ej. entorno sin DOM) — el informe se
  * sigue generando sin la imagen, con la lista de texto como respaldo.
  */
-export async function renderDamageSchemaImage(danos: DanoMarcador[]): Promise<string | null> {
+export async function renderDamageSchemaImage(
+  danos: DanoMarcador[],
+  tipoVehiculo: TipoVehiculo = 'coche',
+): Promise<string | null> {
   if (typeof document === 'undefined') return null;
 
   try {
+    const { src, width: CANVAS_WIDTH, height: CANVAS_HEIGHT } = CANVAS_POR_TIPO[tipoVehiculo];
     const img = new Image();
-    img.src = '/car-schema.svg';
+    img.src = src;
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve();
-      img.onerror = () => reject(new Error('No se pudo cargar car-schema.svg'));
+      img.onerror = () => reject(new Error(`No se pudo cargar ${src}`));
     });
 
     const canvas = document.createElement('canvas');

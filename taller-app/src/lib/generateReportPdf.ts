@@ -3,13 +3,14 @@ import { createElement } from 'react';
 import { supabase, BUCKETS } from './supabase';
 import InspectionReportPdf from '../components/InspectionReportPdf';
 import { renderDamageSchemaImage } from './renderDamageSchema';
-import type { DanoMarcador, NivelCombustible, TipoServicio } from './types';
+import type { DanoMarcador, NivelCombustible, TipoServicio, TipoVehiculo } from './types';
 
 interface GenerarInformeParams {
   ordenId: string;
   matricula: string;
   cliente: { nombre: string; dni: string; telefono: string; email?: string | null };
   vehiculo: { matricula: string; marca?: string; modelo?: string };
+  tipoVehiculo: TipoVehiculo;
   tipoServicio: TipoServicio;
   descripcionAveria?: string;
   kilometraje: number;
@@ -32,7 +33,7 @@ function formatFechaArchivo(fecha: Date): string {
  */
 export async function generarYSubirInformePdf(params: GenerarInformeParams): Promise<string> {
   const fecha = new Date();
-  const esquemaImagenUrl = await renderDamageSchemaImage(params.danos);
+  const esquemaImagenUrl = await renderDamageSchemaImage(params.danos, params.tipoVehiculo);
 
   const documento = createElement(InspectionReportPdf, {
     cliente: params.cliente,

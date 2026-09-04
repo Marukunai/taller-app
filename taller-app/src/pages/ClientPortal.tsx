@@ -716,7 +716,11 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
                   )}
                   {s.estado === 'aceptada' &&
                     (ordenesPorSolicitud[s.id] ? (
-                      <SeguimientoOrdenCliente orden={ordenesPorSolicitud[s.id]} matricula={s.matricula} />
+                      <SeguimientoOrdenCliente
+                        orden={ordenesPorSolicitud[s.id]}
+                        matricula={s.matricula}
+                        tipoVehiculo={s.tipo_vehiculo}
+                      />
                     ) : (
                       <p className="flex items-center gap-1.5 text-xs text-emerald-600">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Trae el vehículo cuando acordéis — el
@@ -809,7 +813,15 @@ export default function ClientPortal({ nombreUsuario, emailUsuario }: ClientPort
  * esquema de daños + PDF), PDF de entrega y, una vez entregado, el bloque
  * de valoración — todo dentro de la propia tarjeta de la solicitud.
  */
-function SeguimientoOrdenCliente({ orden, matricula }: { orden: OrdenCliente; matricula: string | null }) {
+function SeguimientoOrdenCliente({
+  orden,
+  matricula,
+  tipoVehiculo,
+}: {
+  orden: OrdenCliente;
+  matricula: string | null;
+  tipoVehiculo: TipoVehiculo;
+}) {
   return (
     <div className="space-y-3 rounded-lg border border-emerald-100 bg-emerald-50/40 p-3">
       <BarraProgresoOrden estado={orden.estado} />
@@ -842,7 +854,7 @@ function SeguimientoOrdenCliente({ orden, matricula }: { orden: OrdenCliente; ma
       )}
 
       {orden.inspecciones_entrada && orden.inspecciones_entrada.length > 0 && (
-        <InformeEntradaCliente inspeccion={orden.inspecciones_entrada[0]} />
+        <InformeEntradaCliente inspeccion={orden.inspecciones_entrada[0]} tipoVehiculo={tipoVehiculo} />
       )}
 
       {orden.pdf_salida_url && (
@@ -923,20 +935,26 @@ function BarraProgresoOrden({ estado }: { estado: EstadoOrden }) {
  *  misma función que ya genera esta imagen para el PDF — así el cliente ve
  *  exactamente el mismo dibujo) + enlace al PDF completo. No repite el
  *  editor interactivo de daños (CarDamagePicker) — es de solo lectura. */
-function InformeEntradaCliente({ inspeccion }: { inspeccion: InspeccionCliente }) {
+function InformeEntradaCliente({
+  inspeccion,
+  tipoVehiculo,
+}: {
+  inspeccion: InspeccionCliente;
+  tipoVehiculo: TipoVehiculo;
+}) {
   const [imagenDanos, setImagenDanos] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelado = false;
     if (inspeccion.daños_coordenadas && inspeccion.daños_coordenadas.length > 0) {
-      renderDamageSchemaImage(inspeccion.daños_coordenadas).then((url) => {
+      renderDamageSchemaImage(inspeccion.daños_coordenadas, tipoVehiculo).then((url) => {
         if (!cancelado) setImagenDanos(url);
       });
     }
     return () => {
       cancelado = true;
     };
-  }, [inspeccion.daños_coordenadas]);
+  }, [inspeccion.daños_coordenadas, tipoVehiculo]);
 
   const hayFotos = !!inspeccion.fotos_urls && inspeccion.fotos_urls.length > 0;
   if (!hayFotos && !imagenDanos && !inspeccion.pdf_informe_url) return null;
